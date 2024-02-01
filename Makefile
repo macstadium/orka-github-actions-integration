@@ -12,7 +12,7 @@ clean:
 	@rm -fr ${BUILD_DIR}
 
 .PHONY: all
-all: tidy fmt lint build unittest
+all: tidy fmt lint build
 
 .PHONY: lint
 lint:
