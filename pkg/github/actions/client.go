@@ -18,10 +18,23 @@ type ActionsClient struct {
 	AuthorizationInfo *types.AuthorizationInfo
 }
 
-func (client *ActionsClient) GetRunnersList(ctx context.Context, runnerGroupId int, runnerName string) (*types.RunnersListResponse, error) {
+func (client *ActionsClient) GetRunnerScaleSet(ctx context.Context, runnerGroupId int, runnerName string) (*types.Runner, error) {
 	path := fmt.Sprintf("%s/%s?runnerGroupId=%d&name=%s", client.AuthorizationInfo.ActionsServiceUrl, scaleSetEndpoint, runnerGroupId, runnerName)
 
-	return api.RequestJSON[any, types.RunnersListResponse](ctx, client.Client, http.MethodGet, path, nil)
+	runnerScaleSetList, err := api.RequestJSON[any, types.RunnersListResponse](ctx, client.Client, http.MethodGet, path, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if runnerScaleSetList.Count == 0 {
+		return nil, nil
+	}
+
+	if runnerScaleSetList.Count > 1 {
+		return nil, fmt.Errorf("multiple runner scale sets found with name %s", runnerName)
+	}
+
+	return &runnerScaleSetList.Runners[0], nil
 }
 
 func (client *ActionsClient) CreateRunner(ctx context.Context, runner *types.Runner) (*types.Runner, error) {

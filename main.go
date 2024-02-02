@@ -16,7 +16,7 @@ import (
 func main() {
 	envData := env.ParseEnv()
 
-	context := context.TODO()
+	ctx := context.TODO()
 
 	config, err := github.NewGitHubConfig(envData.GitHubURL)
 	if err != nil {
@@ -28,12 +28,12 @@ func main() {
 		panic(err)
 	}
 
-	accessToken, err := app.FetchAccessToken(context, envData, httpClient)
+	accessToken, err := app.FetchAccessToken(ctx, envData, httpClient)
 	if err != nil {
 		panic(err)
 	}
 
-	authInfo, err := auth.GetAuthorizationInfo(context, accessToken, config, httpClient)
+	authInfo, err := auth.GetAuthorizationInfo(ctx, accessToken, config, httpClient)
 	if err != nil {
 		panic(err)
 	}
@@ -43,10 +43,10 @@ func main() {
 		panic(err)
 	}
 
-	runnersList, err := actionsClient.GetRunnersList(context, constants.DefaultRunnerGroupID, envData.Runners[0].Name)
+	runnerScaleSet, err := actionsClient.GetRunnerScaleSet(ctx, constants.DefaultRunnerGroupID, envData.Runners[0].Name)
 	if err != nil {
 		panic(err)
 	}
 
-	fmt.Println("runnersList", runnersList)
+	fmt.Println("runnerScaleSet", runnerScaleSet)
 }
