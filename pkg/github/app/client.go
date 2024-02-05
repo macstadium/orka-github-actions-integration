@@ -16,15 +16,18 @@ import (
 	retryablehttp "github.com/macstadium/orka-github-actions-integration/pkg/http"
 )
 
-func FetchAccessToken(ctx context.Context, envData *env.Data, httpClient *retryablehttp.Client) (*types.AccessToken, error) {
+func FetchAccessToken(ctx context.Context, envData *env.Data) (*types.AccessToken, error) {
 	accessTokenJWT, err := createJWTForGitHubApp(envData.GitHubAppID, envData.GitHubAppPrivateKeyPath)
 	if err != nil {
 		return nil, err
 	}
 
-	httpClient.Transport = &retryablehttp.ClientTransport{
+	httpClient, err := retryablehttp.NewClient(&retryablehttp.ClientTransport{
 		Token:       accessTokenJWT,
 		ContentType: "application/vnd.github+json",
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	path := fmt.Sprintf("%s/app/installations/%v/access_tokens", constants.BaseGitHubAPIPath, envData.GitHubAppInstallationID)
@@ -50,7 +53,7 @@ func createJWTForGitHubApp(appID int64, privateKeyPath string) (string, error) {
 
 	privateKeyContent, err := os.ReadFile(privateKeyPath)
 	if err != nil {
-		panic(err)
+		return "", err
 	}
 
 	privateKey, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(privateKeyContent))

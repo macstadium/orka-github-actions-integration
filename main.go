@@ -10,7 +10,6 @@ import (
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/actions"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/app"
 	auth "github.com/macstadium/orka-github-actions-integration/pkg/github/runners-auth"
-	retryablehttp "github.com/macstadium/orka-github-actions-integration/pkg/http"
 )
 
 func main() {
@@ -23,17 +22,12 @@ func main() {
 		panic(err)
 	}
 
-	httpClient, err := retryablehttp.NewClient(&retryablehttp.ClientTransport{})
+	accessToken, err := app.FetchAccessToken(ctx, envData)
 	if err != nil {
 		panic(err)
 	}
 
-	accessToken, err := app.FetchAccessToken(ctx, envData, httpClient)
-	if err != nil {
-		panic(err)
-	}
-
-	authInfo, err := auth.GetAuthorizationInfo(ctx, accessToken, config, httpClient)
+	authInfo, err := auth.GetAuthorizationInfo(ctx, accessToken, config)
 	if err != nil {
 		panic(err)
 	}

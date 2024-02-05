@@ -12,8 +12,8 @@ import (
 	retryablehttp "github.com/macstadium/orka-github-actions-integration/pkg/http"
 )
 
-func GetAuthorizationInfo(ctx context.Context, accessToken *types.AccessToken, config *github.GitHubConfig, httpClient *retryablehttp.Client) (*types.AuthorizationInfo, error) {
-	registrationToken, err := getRegistrationToken(ctx, config, accessToken.Token, httpClient)
+func GetAuthorizationInfo(ctx context.Context, accessToken *types.AccessToken, config *github.GitHubConfig) (*types.AuthorizationInfo, error) {
+	registrationToken, err := getRegistrationToken(ctx, config, accessToken.Token)
 	if err != nil {
 		return nil, err
 	}
@@ -25,9 +25,12 @@ func GetAuthorizationInfo(ctx context.Context, accessToken *types.AccessToken, c
 		RunnerEvent: "register",
 	}
 
-	httpClient.Client.Transport = &retryablehttp.ClientTransport{
+	httpClient, err := retryablehttp.NewClient(&retryablehttp.ClientTransport{
 		ContentType: "application/json",
 		RemoteAuth:  registrationToken.Token,
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return api.RequestJSON[types.RegistrationPayload, types.AuthorizationInfo](ctx, httpClient, http.MethodPost, path, body)
@@ -48,15 +51,18 @@ func createRegistrationTokenPath(config *github.GitHubConfig) (string, error) {
 	}
 }
 
-func getRegistrationToken(ctx context.Context, config *github.GitHubConfig, accessToken string, httpClient *retryablehttp.Client) (*types.RegistrationToken, error) {
+func getRegistrationToken(ctx context.Context, config *github.GitHubConfig, accessToken string) (*types.RegistrationToken, error) {
 	path, err := createRegistrationTokenPath(config)
 	if err != nil {
 		return nil, err
 	}
 
-	httpClient.Client.Transport = &retryablehttp.ClientTransport{
+	httpClient, err := retryablehttp.NewClient(&retryablehttp.ClientTransport{
 		Token:       accessToken,
 		ContentType: "application/vnd.github.v3+json",
+	})
+	if err != nil {
+		return nil, err
 	}
 
 	return api.RequestJSON[any, types.RegistrationToken](ctx, httpClient, http.MethodPost, path, nil)
