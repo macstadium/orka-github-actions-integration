@@ -5,7 +5,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/hashicorp/go-retryablehttp"
+	retryable "github.com/hashicorp/go-retryablehttp"
 )
 
 type Client struct {
@@ -39,7 +39,7 @@ func NewClient(transport *ClientTransport) (*Client, error) {
 		retryWaitMax: 30 * time.Second,
 	}
 
-	retryClient := retryablehttp.NewClient()
+	retryClient := retryable.NewClient()
 
 	retryClient.RetryMax = client.retryMax
 	retryClient.RetryWaitMax = client.retryWaitMax

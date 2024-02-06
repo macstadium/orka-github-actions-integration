@@ -6,6 +6,9 @@ import (
 	"os"
 	"regexp"
 	"strconv"
+	"strings"
+
+	"log"
 
 	"github.com/joho/godotenv"
 )
@@ -32,7 +35,7 @@ type Data struct {
 
 func ParseEnv() *Data {
 	if err := godotenv.Load(); err != nil {
-		fmt.Println("Error loading .env file")
+		log.Println("Error loading .env file", err)
 	}
 
 	envData := &Data{
@@ -47,26 +50,32 @@ func ParseEnv() *Data {
 		OrkaVMPassword: getEnvWithDefault(OrkaVMPasswordEnvName, "admin"),
 	}
 
+	errors := []string{}
+
 	if appID, err := strconv.ParseInt(os.Getenv(GitHubAppIDEnvName), 10, 64); err != nil {
-		panic(fmt.Errorf("%s is not set to a valid number: %w", GitHubAppIDEnvName, err))
+		errors = append(errors, fmt.Sprintf("%s is not set to a valid number: %w", GitHubAppIDEnvName, err))
 	} else {
 		envData.GitHubAppID = appID
 	}
 
 	if installationID, err := strconv.ParseInt(os.Getenv(GitHubAppInstallationIDEnvName), 10, 64); err != nil {
-		panic(fmt.Errorf("%s is not set to a valid number: %w", GitHubAppInstallationIDEnvName, err))
+		errors = append(errors, fmt.Sprintf("%s is not set to a valid number: %w", GitHubAppInstallationIDEnvName, err))
 	} else {
 		envData.GitHubAppInstallationID = installationID
 	}
 
 	if runners, err := getRunnersFromEnv(); err != nil {
-		panic(err)
+		errors = append(errors, err.Error())
 	} else {
 		envData.Runners = runners
 	}
 
-	if err := validateEnv(envData); err != nil {
-		panic(err)
+	if errs := validateEnv(envData); len(errs) > 0 {
+		errors = append(errors, errs...)
+	}
+
+	if len(errors) > 0 {
+		panic(fmt.Sprintf("Invalid environment configuration. Please fix the errors below:\n%s", strings.Join(errors, "\n")))
 	}
 
 	return envData
@@ -91,26 +100,28 @@ func getRunnersFromEnv() ([]Runner, error) {
 	return runners, nil
 }
 
-func validateEnv(envData *Data) error {
+func validateEnv(envData *Data) []string {
+	errors := []string{}
+
 	if envData.GitHubAppPrivateKeyPath == "" {
-		return fmt.Errorf("%s env is required and must be set to the local file path of the private key obtainer from the GitHub UI after installing Orka GitHub app", GitHubAppPrivateKeyPathEnvName)
+		errors = append(errors, fmt.Sprintf("%s env is required and must be set to the local file path of the private key obtainer from the GitHub UI after installing Orka GitHub app", GitHubAppPrivateKeyPathEnvName))
 	}
 
 	if !regexp.MustCompile(`^https?://github.com/.+`).MatchString(envData.GitHubURL) {
-		return fmt.Errorf("%s env is required and must be set to the GitHub repository or organization URL, for example, 'https://github.com/your-username/your-repository'", GitHubURLEnvName)
+		errors = append(errors, fmt.Sprintf("%s env is required and must be set to the GitHub repository or organization URL, for example, 'https://github.com/your-username/your-repository'", GitHubURLEnvName))
 	}
 
 	if !regexp.MustCompile(`^http?://.+`).MatchString(envData.OrkaURL) {
-		return fmt.Errorf("%s env is required and must be set to the Orka API URL of the Orka cluster, for example, `http://10.221.188.20`", OrkaURLEnvName)
+		errors = append(errors, fmt.Sprintf("%s env is required and must be set to the Orka API URL of the Orka cluster, for example, `http://10.221.188.20`", OrkaURLEnvName))
 	}
 
 	if envData.OrkaToken == "" {
-		return fmt.Errorf("%s env is required and must be set to a valid JWT token from the Orka cluster", OrkaTokenEnvName)
+		errors = append(errors, fmt.Sprintf("%s env is required and must be set to a valid JWT token from the Orka cluster", OrkaTokenEnvName))
 	}
 
 	if envData.OrkaVMConfig == "" {
-		return fmt.Errorf("%s env is required and must be set to a valid and existing VM config in the Orka cluster", OrkaVMConfigEnvName)
+		errors = append(errors, fmt.Sprintf("%s env is required and must be set to a valid and existing VM config in the Orka cluster", OrkaVMConfigEnvName))
 	}
 
-	return nil
+	return errors
 }
