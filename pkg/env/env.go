@@ -53,13 +53,13 @@ func ParseEnv() *Data {
 	errors := []string{}
 
 	if appID, err := strconv.ParseInt(os.Getenv(GitHubAppIDEnvName), 10, 64); err != nil {
-		errors = append(errors, fmt.Sprintf("%s is not set to a valid number: %w", GitHubAppIDEnvName, err))
+		errors = append(errors, fmt.Sprintf("%s is not set to a valid number: %s", GitHubAppIDEnvName, err))
 	} else {
 		envData.GitHubAppID = appID
 	}
 
 	if installationID, err := strconv.ParseInt(os.Getenv(GitHubAppInstallationIDEnvName), 10, 64); err != nil {
-		errors = append(errors, fmt.Sprintf("%s is not set to a valid number: %w", GitHubAppInstallationIDEnvName, err))
+		errors = append(errors, fmt.Sprintf("%s is not set to a valid number: %s", GitHubAppInstallationIDEnvName, err))
 	} else {
 		envData.GitHubAppInstallationID = installationID
 	}

@@ -21,7 +21,7 @@ const (
 	GitHubScopeRepository
 )
 
-var ErrInvalidGitHubConfigURL = fmt.Errorf("invalid config URL, should point to an enterprise, org, or repository")
+var ErrInvalidGitHubConfigURL = fmt.Errorf("invalid config URL, should point to an organization or repository")
 
 func NewGitHubConfig(gitHubURL string) (*GitHubConfig, error) {
 	u, err := url.Parse(strings.Trim(gitHubURL, "/"))
@@ -31,7 +31,7 @@ func NewGitHubConfig(gitHubURL string) (*GitHubConfig, error) {
 
 	pathParts := strings.Split(strings.Trim(u.Path, "/"), "/")
 
-	invalidURLError := fmt.Errorf("%q: %w", u.String(), ErrInvalidGitHubConfigURL)
+	invalidURLError := fmt.Errorf("%q: %s", u.String(), ErrInvalidGitHubConfigURL)
 
 	config := &GitHubConfig{
 		URL: gitHubURL,
