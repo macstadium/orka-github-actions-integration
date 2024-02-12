@@ -11,6 +11,7 @@ import (
 	"log"
 
 	"github.com/joho/godotenv"
+	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
 )
 
 type Runner struct {
@@ -31,6 +32,8 @@ type Data struct {
 	OrkaVMPassword string
 
 	Runners []Runner
+
+	LogLevel string
 }
 
 func ParseEnv() *Data {
@@ -48,6 +51,8 @@ func ParseEnv() *Data {
 		OrkaVMConfig:   os.Getenv(OrkaVMConfigEnvName),
 		OrkaVMUsername: getEnvWithDefault(OrkaVMUsernameEnvName, "admin"),
 		OrkaVMPassword: getEnvWithDefault(OrkaVMPasswordEnvName, "admin"),
+
+		LogLevel: getEnvWithDefault(LogLevelEnvName, logging.LogLevelInfo),
 	}
 
 	errors := []string{}

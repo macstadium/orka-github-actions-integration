@@ -6,6 +6,7 @@ import (
 	"time"
 
 	retryable "github.com/hashicorp/go-retryablehttp"
+	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
 )
 
 type Client struct {
@@ -19,6 +20,7 @@ type ClientTransport struct {
 	Token       string
 	ContentType string
 	RemoteAuth  string
+	Accept      string
 }
 
 func (t *ClientTransport) RoundTrip(req *http.Request) (*http.Response, error) {
@@ -30,6 +32,11 @@ func (t *ClientTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 
 	req.Header.Set("Authorization", authorization)
 	req.Header.Set("Content-Type", t.ContentType)
+
+	if t.Accept != "" {
+		req.Header.Set("Accept", t.Accept)
+	}
+
 	return http.DefaultTransport.RoundTrip(req)
 }
 
@@ -40,6 +47,7 @@ func NewClient(transport *ClientTransport) (*Client, error) {
 	}
 
 	retryClient := retryable.NewClient()
+	retryClient.Logger = &LeveledLogger{logger: logging.Logger}
 
 	retryClient.RetryMax = client.retryMax
 	retryClient.RetryWaitMax = client.retryWaitMax

@@ -14,4 +14,6 @@ const (
 	OrkaVMPasswordEnvName = "ORKA_VM_PASSWORD"
 
 	RunnersEnvName = "RUNNERS"
+
+	LogLevelEnvName = "LOG_LEVEL"
 )
