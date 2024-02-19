@@ -35,3 +35,7 @@ tidy:
 .PHONY: run
 run: build
 	@${BUILD_DIR}/app
+
+.PHONY: test
+test:
+	go run github.com/onsi/ginkgo/v2/ginkgo -r --keep-going ./...

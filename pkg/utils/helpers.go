@@ -17,7 +17,11 @@ func GetTokenExpirationTime(jwtToken string) (time.Time, error) {
 	}
 
 	if claims, ok := token.Claims.(*JwtClaims); ok {
-		return claims.ExpiresAt.Time, nil
+		if claims.ExpiresAt != nil {
+			return claims.ExpiresAt.Time, nil
+		} else {
+			return time.Time{}, fmt.Errorf("missing expiration claim in token")
+		}
 	}
 
 	return time.Time{}, fmt.Errorf("failed to parse token claims to get expire at")

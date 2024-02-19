@@ -18,3 +18,11 @@ Using the provided `Makefile`, building and running the project can be done as f
 ```shell
 make run
 ```
+
+## Running Tests
+
+To run the tests locally, use the following command:
+
+```bash
+make test
+```
