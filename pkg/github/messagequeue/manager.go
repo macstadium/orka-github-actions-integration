@@ -110,7 +110,7 @@ func (m *MessageQueueManager) Close() error {
 	ctxWithTimeout, cancel := context.WithTimeout(context.Background(), time.Second*30)
 	defer cancel()
 
-	m.logger.Infof("deleting session with name %s and id %d.", m.session.OwnerName, *m.session.SessionId)
+	m.logger.Infof("deleting session with name %s and id %d.", m.session.OwnerName, m.session.SessionId.String())
 	err := m.client.DeleteMessageSession(ctxWithTimeout, m.session.RunnerScaleSet.Id, m.session.SessionId)
 	if err != nil {
 		return fmt.Errorf("delete message session failed. %w", err)

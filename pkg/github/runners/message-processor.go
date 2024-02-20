@@ -18,12 +18,11 @@ type RunnerScaleSettings struct {
 
 func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerInterface, runnerProvisioner RunnerProvisionerInterface, settings *RunnerScaleSettings) *RunnerMessageProcessor {
 	return &RunnerMessageProcessor{
-		ctx:                ctx,
-		runnerManager:      runnerManager,
-		runnerProvisioner:  runnerProvisioner,
-		settings:           settings,
-		currentRunnerCount: -1,
-		logger:             logging.Logger,
+		ctx:               ctx,
+		runnerManager:     runnerManager,
+		runnerProvisioner: runnerProvisioner,
+		settings:          settings,
+		logger:            logging.Logger,
 	}
 }
 
@@ -66,7 +65,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 	}
 
 	if message.MessageId == 0 && message.Body == "" { // initial message with statistics only
-		return p.adjustRunnerCount(message.Statistics.TotalAssignedJobs)
+		return nil
 	}
 
 	var batchedMessages []json.RawMessage
@@ -77,6 +76,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 	p.logger.Infof("process batched runner scale set job messages with id %d and batch size %d", message.MessageId, len(batchedMessages))
 
 	var availableJobs []int64
+	var assignedJobs []types.JobAssigned
 	for _, message := range batchedMessages {
 		var messageType types.JobMessageType
 		if err := json.Unmarshal(message, &messageType); err != nil {
@@ -96,6 +96,9 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 			if err := json.Unmarshal(message, &jobAssigned); err != nil {
 				return fmt.Errorf("could not decode job assigned message. %w", err)
 			}
+
+			assignedJobs = append(assignedJobs, jobAssigned)
+
 			p.logger.Infof("Job assigned message received for RunnerRequestId: %d", jobAssigned.RunnerRequestId)
 		case "JobStarted":
 			var jobStarted types.JobStarted
@@ -103,7 +106,6 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 				return fmt.Errorf("could not decode job started message. %w", err)
 			}
 			p.logger.Infof("Job started message received for RunnerRequestId: %d and RunnerId: %d", jobStarted.RunnerRequestId, jobStarted.RunnerId)
-			p.runnerProvisioner.HandleJobStartedForRunner(p.ctx, jobStarted.RunnerName, jobStarted.OwnerName, jobStarted.RepositoryName, jobStarted.JobWorkflowRef, jobStarted.JobDisplayName, jobStarted.WorkflowRunId, jobStarted.RunnerRequestId)
 		case "JobCompleted":
 			var jobCompleted types.JobCompleted
 			if err := json.Unmarshal(message, &jobCompleted); err != nil {
@@ -121,25 +123,11 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 		return fmt.Errorf("could not acquire jobs. %w", err)
 	}
 
-	return p.adjustRunnerCount(message.Statistics.TotalAssignedJobs)
-}
-
-func (p *RunnerMessageProcessor) adjustRunnerCount(count int) error {
-	targetRunnerCount := min(p.settings.MinRunners+count, p.settings.MaxRunners)
-	if targetRunnerCount != p.currentRunnerCount {
-		p.logger.Infof("Scaling runner set based on assigned jobs: Count: %d, Decision: %d runners (Min: %d, Max: %d, Current: %d)",
-			count,
-			targetRunnerCount,
-			p.settings.MinRunners,
-			p.settings.MaxRunners,
-			p.currentRunnerCount,
-		)
-		err := p.runnerProvisioner.ProvisionJITRunner(p.ctx, p.settings.RunnerName, targetRunnerCount)
+	for _, job := range assignedJobs {
+		err = p.runnerProvisioner.ProvisionJITRunner(p.ctx, fmt.Sprintf("%s-%d-%d", p.settings.RunnerName, job.RunnerRequestId, job.WorkflowRunId))
 		if err != nil {
-			return fmt.Errorf("could not scale ephemeral runner set %s. %w", p.settings.RunnerName, err)
+			p.logger.Errorf("unable to provision Orka runner for %s. More information: %s", p.settings.RunnerName, err.Error())
 		}
-
-		p.currentRunnerCount = targetRunnerCount
 	}
 
 	return nil

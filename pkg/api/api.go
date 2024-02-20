@@ -4,12 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
-
-	retryablehttp "github.com/macstadium/orka-github-actions-integration/pkg/http"
 )
 
-func RequestJSON[Req any, Res any](ctx context.Context, client *retryablehttp.Client, method string, path string, body *Req) (*Res, error) {
+func RequestJSON[Req any, Res any](ctx context.Context, client *http.Client, method string, path string, body *Req) (*Res, error) {
 	buffer := bytes.Buffer{}
 	if body != nil {
 		if err := json.NewEncoder(&buffer).Encode(body); err != nil {
@@ -27,6 +27,16 @@ func RequestJSON[Req any, Res any](ctx context.Context, client *retryablehttp.Cl
 		return nil, err
 	}
 	defer response.Body.Close()
+
+	isSuccessStatusCode := response.StatusCode >= 200 && response.StatusCode <= 299
+	if !isSuccessStatusCode {
+		body, err := io.ReadAll(response.Body)
+		if err != nil {
+			return nil, err
+		}
+
+		return nil, fmt.Errorf(string(body))
+	}
 
 	responseModel := new(Res)
 	if err = json.NewDecoder(response.Body).Decode(&responseModel); err != nil {

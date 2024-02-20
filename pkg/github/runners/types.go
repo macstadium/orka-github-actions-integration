@@ -26,15 +26,13 @@ type RunnerManager struct {
 }
 
 type RunnerProvisionerInterface interface {
-	ProvisionJITRunner(ctx context.Context, runnerName string, runnerCount int) error
-	HandleJobStartedForRunner(ctx context.Context, runnerName, ownerName, repositoryName, jobWorkflowRef, jobDisplayName string, jobRequestId, workflowRunId int64)
+	ProvisionJITRunner(ctx context.Context, runnerName string) error
 }
 
 type RunnerMessageProcessor struct {
-	ctx                context.Context
-	logger             *zap.SugaredLogger
-	runnerManager      RunnerManagerInterface
-	runnerProvisioner  RunnerProvisionerInterface
-	settings           *RunnerScaleSettings
-	currentRunnerCount int
+	ctx               context.Context
+	logger            *zap.SugaredLogger
+	runnerManager     RunnerManagerInterface
+	runnerProvisioner RunnerProvisionerInterface
+	settings          *RunnerScaleSettings
 }

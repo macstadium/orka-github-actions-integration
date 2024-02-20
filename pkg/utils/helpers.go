@@ -7,6 +7,14 @@ import (
 	"github.com/golang-jwt/jwt/v4"
 )
 
+func Map[T, V any](in []T, fn func(T) V) []V {
+	out := make([]V, len(in))
+	for i, t := range in {
+		out[i] = fn(t)
+	}
+	return out
+}
+
 func GetTokenExpirationTime(jwtToken string) (time.Time, error) {
 	type JwtClaims struct {
 		jwt.RegisteredClaims

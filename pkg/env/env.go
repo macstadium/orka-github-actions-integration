@@ -23,10 +23,12 @@ type Data struct {
 	GitHubAppInstallationID int64
 	GitHubAppPrivateKeyPath string
 	GitHubURL               string
+	GitHubRunnerVersion     string
 
 	OrkaURL   string
 	OrkaToken string
 
+	OrkaNamespace  string
 	OrkaVMConfig   string
 	OrkaVMUsername string
 	OrkaVMPassword string
@@ -44,10 +46,12 @@ func ParseEnv() *Data {
 	envData := &Data{
 		GitHubAppPrivateKeyPath: os.Getenv(GitHubAppPrivateKeyPathEnvName),
 		GitHubURL:               os.Getenv(GitHubURLEnvName),
+		GitHubRunnerVersion:     getEnvWithDefault(GitHubRunnerVersionEnvName, "2.312.0"),
 
 		OrkaURL:   os.Getenv(OrkaURLEnvName),
 		OrkaToken: os.Getenv(OrkaTokenEnvName),
 
+		OrkaNamespace:  getEnvWithDefault(OrkaNamespaceEnvName, "orka-default"),
 		OrkaVMConfig:   os.Getenv(OrkaVMConfigEnvName),
 		OrkaVMUsername: getEnvWithDefault(OrkaVMUsernameEnvName, "admin"),
 		OrkaVMPassword: getEnvWithDefault(OrkaVMPasswordEnvName, "admin"),

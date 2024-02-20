@@ -14,20 +14,10 @@ import (
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/runners"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
+	"github.com/macstadium/orka-github-actions-integration/pkg/orka"
+	provisioner "github.com/macstadium/orka-github-actions-integration/pkg/runner-provisioner"
+	"go.uber.org/zap"
 )
-
-type RunnerProvisioner struct {
-	runnerScaleSet *types.RunnerScaleSet
-	client         *actions.ActionsClient
-	envData        *env.Data
-}
-
-func (h *RunnerProvisioner) ProvisionJITRunner(ctx context.Context, runnerName string, runnerCount int) error {
-	return nil
-}
-
-func (h RunnerProvisioner) HandleJobStartedForRunner(ctx context.Context, runnerName, ownerName, repositoryName, jobWorkflowRef, jobDisplayName string, jobRequestId, workflowRunId int64) {
-}
 
 var runnerScaleSetIDs = []int{}
 
@@ -38,49 +28,32 @@ func main() {
 	defer stop()
 
 	logging.SetupLogger(envData.LogLevel)
+	logger := logging.Logger.Named("main")
 
 	config, err := github.NewGitHubConfig(envData.GitHubURL)
 	if err != nil {
 		panic(err)
 	}
 
+	runnerName := envData.Runners[0].Name
+
 	actionsClient, err := actions.NewActionsClient(ctx, envData, config)
 	if err != nil {
 		panic(err)
 	}
-
-	runnerName := envData.Runners[0].Name
 
 	runnerScaleSet, err := actionsClient.GetRunnerScaleSet(ctx, constants.DefaultRunnerGroupID, runnerName)
 	if err != nil {
 		panic(err)
 	}
 
-	if runnerScaleSet == nil {
-		runnerScaleSet, err = actionsClient.CreateRunnerScaleSet(ctx, &types.RunnerScaleSet{
-			Name:          runnerName,
-			RunnerGroupId: constants.DefaultRunnerGroupID,
-			Labels: []types.RunnerScaleSetLabel{
-				{
-					Name: runnerName,
-					Type: "System",
-				},
-			},
-			RunnerSetting: types.RunnerScaleSetSetting{
-				Ephemeral:     true,
-				DisableUpdate: true,
-			},
-		})
+	if runnerScaleSet != nil {
+		err = actionsClient.DeleteRunnerScaleSet(ctx, runnerScaleSet.Id)
 		if err != nil {
-			panic(fmt.Sprintf("unable to create runner %s, err: %s", runnerName, err.Error()))
+			panic(err)
 		}
 	}
 
-	runnerScaleSetIDs = append(runnerScaleSetIDs, runnerScaleSet.Id)
-
-	// Start a goroutine to handle cleanup tasks
-	// TODO: This works for the ctrl + C case
-	// It doesn't work when the app crashes or when the app exits normally
 	go func() {
 		// Wait for termination signal
 		<-ctx.Done()
@@ -90,23 +63,51 @@ func main() {
 
 			for _, runnerScaleSetID := range runnerScaleSetIDs {
 				err = actionsClient.DeleteRunnerScaleSet(context.TODO(), runnerScaleSetID)
+				if err != nil {
+					fmt.Printf("error while deleting runnerScaleSet %s", err.Error())
+				}
 			}
 
 			os.Exit(0)
 		}
 	}()
 
-	run(ctx, actionsClient, runnerScaleSet, envData)
+	runnerScaleSet, err = actionsClient.CreateRunnerScaleSet(ctx, &types.RunnerScaleSet{
+		Name:          runnerName,
+		RunnerGroupId: constants.DefaultRunnerGroupID,
+		Labels: []types.RunnerScaleSetLabel{
+			{
+				Name: runnerName,
+				Type: "System",
+			},
+		},
+		RunnerSetting: types.RunnerScaleSetSetting{
+			Ephemeral:     true,
+			DisableUpdate: true,
+		},
+	})
+	if err != nil {
+		panic(fmt.Sprintf("unable to create runner %s, err: %s", runnerName, err.Error()))
+	}
+
+	runnerScaleSetIDs = append(runnerScaleSetIDs, runnerScaleSet.Id)
+
+	orkaClient, err := orka.NewOrkaClient(envData, ctx)
+	if err != nil {
+		panic(fmt.Sprintf("unable to access Orka cluster. More info: %s", err.Error()))
+	}
+
+	run(ctx, actionsClient, orkaClient, runnerScaleSet, envData, logger)
 }
 
-func run(ctx context.Context, actionsClient *actions.ActionsClient, runnerScaleSet *types.RunnerScaleSet, envData *env.Data) {
+func run(ctx context.Context, actionsClient *actions.ActionsClient, orkaClient *orka.OrkaClient, runnerScaleSet *types.RunnerScaleSet, envData *env.Data, logger *zap.SugaredLogger) {
 	runnerManager, err := runners.NewRunnerManager(ctx, actionsClient, runnerScaleSet.Id)
 	if err != nil {
 		panic(err)
 	}
 	defer runnerManager.Close()
 
-	runnerProvisioner := &RunnerProvisioner{runnerScaleSet: runnerScaleSet, client: actionsClient, envData: envData}
+	runnerProvisioner := provisioner.NewRunnerProvisioner(runnerScaleSet, actionsClient, orkaClient, envData)
 
 	runnerMessageProcessor := runners.NewRunnerMessageProcessor(ctx, runnerManager, runnerProvisioner, &runners.RunnerScaleSettings{
 		RunnerName: runnerScaleSet.Name,
@@ -115,6 +116,6 @@ func run(ctx context.Context, actionsClient *actions.ActionsClient, runnerScaleS
 	})
 
 	if err = runnerMessageProcessor.StartProcessingMessages(); err != nil {
-		panic(fmt.Errorf("failed to start processisng messages: %w", err))
+		logger.Errorf("failed to start processing messages for runnerScaleSet %s: %w", runnerScaleSet.Name, err.Error())
 	}
 }

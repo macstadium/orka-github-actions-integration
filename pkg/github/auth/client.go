@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/macstadium/orka-github-actions-integration/pkg/api"
 	"github.com/macstadium/orka-github-actions-integration/pkg/constants"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github"
-	"github.com/macstadium/orka-github-actions-integration/pkg/github/api"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 	retryablehttp "github.com/macstadium/orka-github-actions-integration/pkg/http"
 )
@@ -33,7 +33,7 @@ func GetAuthorizationInfo(ctx context.Context, accessToken *types.AccessToken, c
 		return nil, err
 	}
 
-	return api.RequestJSON[types.RegistrationPayload, types.AuthorizationInfo](ctx, httpClient, http.MethodPost, path, body)
+	return api.RequestJSON[types.RegistrationPayload, types.AuthorizationInfo](ctx, httpClient.Client, http.MethodPost, path, body)
 }
 
 func createRegistrationTokenPath(config *github.GitHubConfig) (string, error) {
@@ -65,5 +65,5 @@ func getRegistrationToken(ctx context.Context, config *github.GitHubConfig, acce
 		return nil, err
 	}
 
-	return api.RequestJSON[any, types.RegistrationToken](ctx, httpClient, http.MethodPost, path, nil)
+	return api.RequestJSON[any, types.RegistrationToken](ctx, httpClient.Client, http.MethodPost, path, nil)
 }
