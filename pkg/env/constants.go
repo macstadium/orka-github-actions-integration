@@ -4,6 +4,7 @@ const (
 	GitHubAppIDEnvName             = "GITHUB_APP_ID"
 	GitHubAppInstallationIDEnvName = "GITHUB_APP_INSTALLATION_ID"
 	GitHubAppPrivateKeyPathEnvName = "GITHUB_APP_PRIVATE_KEY_PATH"
+	GitHubAppPrivateKeyEnvName     = "GITHUB_APP_PRIVATE_KEY"
 	GitHubURLEnvName               = "GITHUB_URL"
 	GitHubRunnerVersionEnvName     = "GITHUB_RUNNER_VERSION"
 

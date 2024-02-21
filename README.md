@@ -52,7 +52,7 @@ Before using the Orka GitHub Runner, ensure that the following prerequisites are
 The Orka GitHub runner requires the following environment variabales to be configured:
 * `GITHUB_APP_ID`: The unique identifier for the GitHub App.
 * `GITHUB_APP_INSTALLATION_ID`: The installation identifier for the GitHub App.
-* `GITHUB_APP_PRIVATE_KEY_PATH`: The file path to the private key associated with the GitHub App.
+* `GITHUB_APP_PRIVATE_KEY_PATH` or `GITHUB_APP_PRIVATE_KEY`: The private key associated with the GitHub App. You can either provide the file path to the private key using `GITHUB_APP_PRIVATE_KEY_PATH` or directly provide the private key string using `GITHUB_APP_PRIVATE_KEY`. At least one of these environment variables must be set.
 * `GITHUB_URL`: The URL of the GitHub repository or organization.
 * `ORKA_URL`: The URL of the Orka server.
 * `ORKA_TOKEN`: The authentication token for accessing the Orka API.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"os"
 	"strconv"
 	"time"
 
@@ -17,7 +16,7 @@ import (
 )
 
 func FetchAccessToken(ctx context.Context, envData *env.Data) (*types.AccessToken, error) {
-	accessTokenJWT, err := createJWTForGitHubApp(envData.GitHubAppID, envData.GitHubAppPrivateKeyPath)
+	accessTokenJWT, err := createJWTForGitHubApp(envData.GitHubAppID, envData.GitHubAppPrivateKey)
 	if err != nil {
 		return nil, err
 	}
@@ -35,7 +34,7 @@ func FetchAccessToken(ctx context.Context, envData *env.Data) (*types.AccessToke
 	return api.RequestJSON[any, types.AccessToken](ctx, httpClient.Client, http.MethodPost, path, nil)
 }
 
-func createJWTForGitHubApp(appID int64, privateKeyPath string) (string, error) {
+func createJWTForGitHubApp(appID int64, privateKeyContent string) (string, error) {
 	// Encode as JWT
 	// See https://docs.github.com/en/developers/apps/building-github-apps/authenticating-with-github-apps#authenticating-as-a-github-app
 
@@ -50,11 +49,6 @@ func createJWTForGitHubApp(appID int64, privateKeyPath string) (string, error) {
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
-
-	privateKeyContent, err := os.ReadFile(privateKeyPath)
-	if err != nil {
-		return "", err
-	}
 
 	privateKey, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(privateKeyContent))
 	if err != nil {

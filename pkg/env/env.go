@@ -21,7 +21,7 @@ type Runner struct {
 type Data struct {
 	GitHubAppID             int64
 	GitHubAppInstallationID int64
-	GitHubAppPrivateKeyPath string
+	GitHubAppPrivateKey     string
 	GitHubURL               string
 	GitHubRunnerVersion     string
 
@@ -44,9 +44,9 @@ func ParseEnv() *Data {
 	}
 
 	envData := &Data{
-		GitHubAppPrivateKeyPath: os.Getenv(GitHubAppPrivateKeyPathEnvName),
-		GitHubURL:               os.Getenv(GitHubURLEnvName),
-		GitHubRunnerVersion:     getEnvWithDefault(GitHubRunnerVersionEnvName, "2.312.0"),
+		GitHubAppPrivateKey: os.Getenv(GitHubAppPrivateKeyEnvName),
+		GitHubURL:           os.Getenv(GitHubURLEnvName),
+		GitHubRunnerVersion: getEnvWithDefault(GitHubRunnerVersionEnvName, "2.312.0"),
 
 		OrkaURL:   os.Getenv(OrkaURLEnvName),
 		OrkaToken: os.Getenv(OrkaTokenEnvName),
@@ -71,6 +71,20 @@ func ParseEnv() *Data {
 		errors = append(errors, fmt.Sprintf("%s is not set to a valid number: %s", GitHubAppInstallationIDEnvName, err))
 	} else {
 		envData.GitHubAppInstallationID = installationID
+	}
+
+	if envData.GitHubAppPrivateKey == "" {
+		gitHubAppPrivateKeyPath := os.Getenv(GitHubAppPrivateKeyPathEnvName)
+		if gitHubAppPrivateKeyPath == "" {
+			errors = append(errors, fmt.Sprintf("GitHub App private key is required. Please provide either a file path to the private key using %s env or the private key directly using %s env variable", GitHubAppPrivateKeyPathEnvName, GitHubAppPrivateKeyEnvName))
+		} else {
+			privateKeyContent, err := os.ReadFile(gitHubAppPrivateKeyPath)
+			if err != nil {
+				errors = append(errors, err.Error())
+			}
+
+			envData.GitHubAppPrivateKey = string(privateKeyContent)
+		}
 	}
 
 	if runners, err := getRunnersFromEnv(); err != nil {
@@ -111,10 +125,6 @@ func getRunnersFromEnv() ([]Runner, error) {
 
 func validateEnv(envData *Data) []string {
 	errors := []string{}
-
-	if envData.GitHubAppPrivateKeyPath == "" {
-		errors = append(errors, fmt.Sprintf("%s env is required and must be set to the local file path of the private key obtainer from the GitHub UI after installing Orka GitHub app", GitHubAppPrivateKeyPathEnvName))
-	}
 
 	if !regexp.MustCompile(`^https?://github.com/.+`).MatchString(envData.GitHubURL) {
 		errors = append(errors, fmt.Sprintf("%s env is required and must be set to the GitHub repository or organization URL, for example, 'https://github.com/your-username/your-repository'", GitHubURLEnvName))
