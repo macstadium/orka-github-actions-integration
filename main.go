@@ -109,11 +109,7 @@ func run(ctx context.Context, actionsClient *actions.ActionsClient, orkaClient *
 
 	runnerProvisioner := provisioner.NewRunnerProvisioner(runnerScaleSet, actionsClient, orkaClient, envData)
 
-	runnerMessageProcessor := runners.NewRunnerMessageProcessor(ctx, runnerManager, runnerProvisioner, &runners.RunnerScaleSettings{
-		RunnerName: runnerScaleSet.Name,
-		MaxRunners: 10,
-		MinRunners: 0,
-	})
+	runnerMessageProcessor := runners.NewRunnerMessageProcessor(ctx, runnerManager, runnerProvisioner, runnerScaleSet.Name)
 
 	if err = runnerMessageProcessor.StartProcessingMessages(); err != nil {
 		logger.Errorf("failed to start processing messages for runnerScaleSet %s: %w", runnerScaleSet.Name, err.Error())

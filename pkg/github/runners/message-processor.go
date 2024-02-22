@@ -10,28 +10,22 @@ import (
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
 )
 
-type RunnerScaleSettings struct {
-	RunnerName string
-	MinRunners int
-	MaxRunners int
-}
-
-func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerInterface, runnerProvisioner RunnerProvisionerInterface, settings *RunnerScaleSettings) *RunnerMessageProcessor {
+func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerInterface, runnerProvisioner RunnerProvisionerInterface, runnerScaleSetName string) *RunnerMessageProcessor {
 	return &RunnerMessageProcessor{
-		ctx:               ctx,
-		runnerManager:     runnerManager,
-		runnerProvisioner: runnerProvisioner,
-		settings:          settings,
-		logger:            logging.Logger,
+		ctx:                ctx,
+		runnerManager:      runnerManager,
+		runnerProvisioner:  runnerProvisioner,
+		logger:             logging.Logger,
+		runnerScaleSetName: runnerScaleSetName,
 	}
 }
 
 func (p *RunnerMessageProcessor) StartProcessingMessages() error {
 	for {
-		p.logger.Infof("waiting for message for runner %s...", p.settings.RunnerName)
+		p.logger.Infof("waiting for message for runner %s...", p.runnerScaleSetName)
 		select {
 		case <-p.ctx.Done():
-			p.logger.Infof("message processing service is stopped for runner %s", p.settings.RunnerName)
+			p.logger.Infof("message processing service is stopped for runner %s", p.runnerScaleSetName)
 			return nil
 		default:
 			err := p.runnerManager.ProcessMessages(p.ctx, p.processRunnerMessage)
@@ -99,9 +93,9 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 			p.logger.Infof("Job assigned message received for RunnerRequestId: %d", jobAssigned.RunnerRequestId)
 
 			go func() {
-				err := p.runnerProvisioner.ProvisionJITRunner(p.ctx, fmt.Sprintf("%s-%d-%d", p.settings.RunnerName, jobAssigned.RunnerRequestId, jobAssigned.WorkflowRunId))
+				err := p.runnerProvisioner.ProvisionJITRunner(p.ctx, fmt.Sprintf("%s-%d-%d", p.runnerScaleSetName, jobAssigned.RunnerRequestId, jobAssigned.WorkflowRunId))
 				if err != nil {
-					p.logger.Errorf("unable to provision Orka runner for %s. More information: %s", p.settings.RunnerName, err.Error())
+					p.logger.Errorf("unable to provision Orka runner for %s. More information: %s", p.runnerScaleSetName, err.Error())
 				}
 			}()
 		case "JobStarted":

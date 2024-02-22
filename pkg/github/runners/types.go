@@ -30,9 +30,9 @@ type RunnerProvisionerInterface interface {
 }
 
 type RunnerMessageProcessor struct {
-	ctx               context.Context
-	logger            *zap.SugaredLogger
-	runnerManager     RunnerManagerInterface
-	runnerProvisioner RunnerProvisionerInterface
-	settings          *RunnerScaleSettings
+	ctx                context.Context
+	logger             *zap.SugaredLogger
+	runnerManager      RunnerManagerInterface
+	runnerProvisioner  RunnerProvisionerInterface
+	runnerScaleSetName string
 }
