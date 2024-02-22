@@ -52,7 +52,7 @@ func (client *OrkaClient) GetVMConfig(ctx context.Context, name string) (*OrkaVM
 		}
 	}
 
-	return nil, nil
+	return nil, fmt.Errorf("failed to get VM config %s", name)
 }
 
 func (client *OrkaClient) GetImage(ctx context.Context, name string) (*OrkaImageResponseModel, error) {
@@ -67,7 +67,7 @@ func (client *OrkaClient) GetImage(ctx context.Context, name string) (*OrkaImage
 		}
 	}
 
-	return nil, nil
+	return nil, fmt.Errorf("failed to get image %s", name)
 }
 
 func NewOrkaClient(envData *env.Data, ctx context.Context) (*OrkaClient, error) {
