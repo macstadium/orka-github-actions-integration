@@ -3,7 +3,10 @@ package orka
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"time"
 
+	"github.com/macstadium/orka-github-actions-integration/pkg/api"
 	"github.com/macstadium/orka-github-actions-integration/pkg/env"
 	"github.com/macstadium/orka-github-actions-integration/pkg/exec"
 )
@@ -68,7 +71,20 @@ func (client *OrkaClient) GetImage(ctx context.Context, name string) (*OrkaImage
 }
 
 func NewOrkaClient(envData *env.Data, ctx context.Context) (*OrkaClient, error) {
-	_, err := exec.ExecStringCommand("orka3", []string{"config", "set", "--api-url", envData.OrkaURL})
+	// This request is designed to fail quickly if there is no connectivity to the cluster.
+	// The orka3 user set-token operation may take up to ~1 minute to fail, which is excessive.
+	client := &http.Client{
+		Transport: &OrkaTransport{
+			Token: envData.OrkaToken,
+		},
+		Timeout: time.Second * 1,
+	}
+	_, err := api.RequestJSON[any, any](ctx, client, http.MethodGet, fmt.Sprintf("%s/api/v1/cluster-info", envData.OrkaURL), nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to the Orka cluster: %s", err.Error())
+	}
+
+	_, err = exec.ExecStringCommand("orka3", []string{"config", "set", "--api-url", envData.OrkaURL})
 	if err != nil {
 		return nil, err
 	}
@@ -81,4 +97,13 @@ func NewOrkaClient(envData *env.Data, ctx context.Context) (*OrkaClient, error) 
 	return &OrkaClient{
 		envData: envData,
 	}, nil
+}
+
+type OrkaTransport struct {
+	Token string
+}
+
+func (t *OrkaTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	req.Header.Add("Authorization", fmt.Sprintf("Bearer %s", t.Token))
+	return http.DefaultTransport.RoundTrip(req)
 }
