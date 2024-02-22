@@ -35,4 +35,5 @@ type RunnerMessageProcessor struct {
 	runnerManager      RunnerManagerInterface
 	runnerProvisioner  RunnerProvisionerInterface
 	runnerScaleSetName string
+	canceledJobs       map[int64]bool
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
@@ -17,6 +18,7 @@ func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerI
 		runnerProvisioner:  runnerProvisioner,
 		logger:             logging.Logger,
 		runnerScaleSetName: runnerScaleSetName,
+		canceledJobs:       map[int64]bool{},
 	}
 }
 
@@ -93,10 +95,18 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 			p.logger.Infof("Job assigned message received for RunnerRequestId: %d", jobAssigned.RunnerRequestId)
 
 			go func() {
-				err := p.runnerProvisioner.ProvisionJITRunner(p.ctx, fmt.Sprintf("%s-%d-%d", p.runnerScaleSetName, jobAssigned.RunnerRequestId, jobAssigned.WorkflowRunId))
-				if err != nil {
-					p.logger.Errorf("unable to provision Orka runner for %s. More information: %s", p.runnerScaleSetName, err.Error())
+				for attempt := 1; !p.canceledJobs[jobAssigned.RunnerRequestId]; attempt++ {
+					err := p.runnerProvisioner.ProvisionJITRunner(p.ctx, fmt.Sprintf("%s-%d-%d", p.runnerScaleSetName, jobAssigned.RunnerRequestId, jobAssigned.WorkflowRunId))
+					if err == nil {
+						break
+					}
+
+					p.logger.Errorf("unable to provision Orka runner for %s (attempt %d). More information: %s", p.runnerScaleSetName, attempt, err.Error())
+
+					time.Sleep(15 * time.Second)
 				}
+
+				delete(p.canceledJobs, jobAssigned.RunnerRequestId)
 			}()
 		case "JobStarted":
 			var jobStarted types.JobStarted
@@ -108,6 +118,10 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 			var jobCompleted types.JobCompleted
 			if err := json.Unmarshal(message, &jobCompleted); err != nil {
 				return fmt.Errorf("could not decode job completed message. %w", err)
+			}
+
+			if jobCompleted.Result == "canceled" {
+				p.canceledJobs[jobCompleted.RunnerRequestId] = true
 			}
 
 			p.logger.Infof("Job completed message received for RunnerRequestId: %d, RunnerId: %d, RunnerName: %s, with Result: %s", jobCompleted.RunnerRequestId, jobCompleted.RunnerId, jobCompleted.RunnerName, jobCompleted.Result)
