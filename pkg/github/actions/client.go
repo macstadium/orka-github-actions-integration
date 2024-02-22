@@ -32,7 +32,7 @@ type ActionsService interface {
 	CreateRunnerScaleSet(ctx context.Context, runnerScaleSet *types.RunnerScaleSet) (*types.RunnerScaleSet, error)
 	DeleteRunnerScaleSet(ctx context.Context, runnerScaleSetId int) error
 
-	GenerateJitRunnerConfig(ctx context.Context, runnerScaleSet *types.RunnerScaleSet) (*types.RunnerScaleSetJitRunnerConfig, error)
+	GenerateJitRunnerConfig(ctx context.Context, runnerScaleSetID int, runnerName string) (*types.RunnerScaleSetJitRunnerConfig, error)
 
 	CreateMessageSession(ctx context.Context, runnerScaleSetId int, owner string) (*types.RunnerScaleSetSession, error)
 	DeleteMessageSession(ctx context.Context, runnerScaleSetId int, sessionId *uuid.UUID) error

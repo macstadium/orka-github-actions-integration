@@ -76,7 +76,6 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 	p.logger.Infof("process batched runner scale set job messages with id %d and batch size %d", message.MessageId, len(batchedMessages))
 
 	var availableJobs []int64
-	var assignedJobs []types.JobAssigned
 	for _, message := range batchedMessages {
 		var messageType types.JobMessageType
 		if err := json.Unmarshal(message, &messageType); err != nil {
@@ -97,9 +96,14 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 				return fmt.Errorf("could not decode job assigned message. %w", err)
 			}
 
-			assignedJobs = append(assignedJobs, jobAssigned)
-
 			p.logger.Infof("Job assigned message received for RunnerRequestId: %d", jobAssigned.RunnerRequestId)
+
+			go func() {
+				err := p.runnerProvisioner.ProvisionJITRunner(p.ctx, fmt.Sprintf("%s-%d-%d", p.settings.RunnerName, jobAssigned.RunnerRequestId, jobAssigned.WorkflowRunId))
+				if err != nil {
+					p.logger.Errorf("unable to provision Orka runner for %s. More information: %s", p.settings.RunnerName, err.Error())
+				}
+			}()
 		case "JobStarted":
 			var jobStarted types.JobStarted
 			if err := json.Unmarshal(message, &jobStarted); err != nil {
@@ -121,13 +125,6 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 	err := p.runnerManager.AcquireJobs(p.ctx, availableJobs)
 	if err != nil {
 		return fmt.Errorf("could not acquire jobs. %w", err)
-	}
-
-	for _, job := range assignedJobs {
-		err = p.runnerProvisioner.ProvisionJITRunner(p.ctx, fmt.Sprintf("%s-%d-%d", p.settings.RunnerName, job.RunnerRequestId, job.WorkflowRunId))
-		if err != nil {
-			p.logger.Errorf("unable to provision Orka runner for %s. More information: %s", p.settings.RunnerName, err.Error())
-		}
 	}
 
 	return nil

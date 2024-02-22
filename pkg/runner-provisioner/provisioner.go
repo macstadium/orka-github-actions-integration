@@ -61,7 +61,7 @@ func (p *RunnerProvisioner) ProvisionJITRunner(ctx context.Context, runnerName s
 
 	p.logger.Infof("found VM config %v", vmConfig)
 
-	jitConfig, err := p.actionsClient.GenerateJitRunnerConfig(ctx, p.runnerScaleSet)
+	jitConfig, err := p.actionsClient.GenerateJitRunnerConfig(ctx, p.runnerScaleSet.Id, runnerName)
 	if err != nil {
 		return err
 	}
