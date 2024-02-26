@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/api"
@@ -91,6 +92,17 @@ func NewOrkaClient(envData *env.Data, ctx context.Context) (*OrkaClient, error) 
 
 	_, err = exec.ExecStringCommand("orka3", []string{"user", "set-token", envData.OrkaToken})
 	if err != nil {
+		return nil, err
+	}
+
+	// The purpose of this call is to check the permissions of the provided token.
+	// If the command fails with an "Unauthorized" error, it indicates that the provided token is not valid.
+	_, err = exec.ExecStringCommand("orka3", []string{"node", "list"})
+	if err != nil {
+		if strings.Contains(err.Error(), "Unauthorized") {
+			return nil, fmt.Errorf("the provided token is not valid. Please provide a valid token")
+		}
+
 		return nil, err
 	}
 
