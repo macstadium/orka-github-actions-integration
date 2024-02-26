@@ -39,7 +39,7 @@ func (client *ActionsClient) DeleteRunnerScaleSet(ctx context.Context, runnerSca
 	return err
 }
 
-func (client *ActionsClient) GenerateJitRunnerConfig(ctx context.Context, runnerScaleSetID int, runnerName string) (*types.RunnerScaleSetJitRunnerConfig, error) {
+func (client *ActionsClient) GenerateJITRunnerConfig(ctx context.Context, runnerScaleSetID int, runnerName string) (*types.RunnerScaleSetJitRunnerConfig, error) {
 	path := fmt.Sprintf("/%s/%d/generatejitconfig", scaleSetEndpoint, runnerScaleSetID)
 
 	jitRunnerSetting := &types.RunnerScaleSetJitRunnerSetting{

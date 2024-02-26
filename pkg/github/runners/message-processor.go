@@ -96,7 +96,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 
 			go func() {
 				for attempt := 1; !p.canceledJobs[jobAssigned.RunnerRequestId]; attempt++ {
-					err := p.runnerProvisioner.ProvisionJITRunner(p.ctx, fmt.Sprintf("%s-%d-%d", p.runnerScaleSetName, jobAssigned.RunnerRequestId, jobAssigned.WorkflowRunId))
+					err := p.runnerProvisioner.ProvisionRunner(p.ctx, fmt.Sprintf("%s-%d-%d", p.runnerScaleSetName, jobAssigned.RunnerRequestId, jobAssigned.WorkflowRunId))
 					if err == nil {
 						break
 					}
@@ -120,11 +120,12 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 				return fmt.Errorf("could not decode job completed message. %w", err)
 			}
 
+			p.logger.Infof("Job completed message received for RunnerRequestId: %d, RunnerId: %d, RunnerName: %s, with Result: %s", jobCompleted.RunnerRequestId, jobCompleted.RunnerId, jobCompleted.RunnerName, jobCompleted.Result)
+
 			if jobCompleted.Result == "canceled" {
 				p.canceledJobs[jobCompleted.RunnerRequestId] = true
+				p.runnerProvisioner.DeprovisionRunner(p.ctx, fmt.Sprintf("%s-%d-%d", p.runnerScaleSetName, jobCompleted.RunnerRequestId, jobCompleted.WorkflowRunId))
 			}
-
-			p.logger.Infof("Job completed message received for RunnerRequestId: %d, RunnerId: %d, RunnerName: %s, with Result: %s", jobCompleted.RunnerRequestId, jobCompleted.RunnerId, jobCompleted.RunnerName, jobCompleted.Result)
 		default:
 			p.logger.Infof("unknown job message type %s", messageType.MessageType)
 		}

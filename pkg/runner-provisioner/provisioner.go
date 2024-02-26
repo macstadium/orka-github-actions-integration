@@ -2,7 +2,6 @@ package provisioner
 
 import (
 	"context"
-	"fmt"
 	"strings"
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/env"
@@ -42,7 +41,7 @@ var commands_template = []string{
 	"echo 'Git Action Runner exited'",
 }
 
-func (p *RunnerProvisioner) ProvisionJITRunner(ctx context.Context, runnerName string) error {
+func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context, runnerName string) error {
 	vmConfig, err := p.orkaClient.GetVMConfig(ctx, p.envData.OrkaVMConfig)
 	if err != nil {
 		return err
@@ -61,29 +60,19 @@ func (p *RunnerProvisioner) ProvisionJITRunner(ctx context.Context, runnerName s
 
 	p.logger.Infof("found VM config %v", vmConfig)
 
-	jitConfig, err := p.actionsClient.GenerateJitRunnerConfig(ctx, p.runnerScaleSet.Id, runnerName)
+	jitConfig, err := p.actionsClient.GenerateJITRunnerConfig(ctx, p.runnerScaleSet.Id, runnerName)
 	if err != nil {
 		return err
 	}
 
-	vmName := fmt.Sprintf("%s-%d", runnerName, jitConfig.Runner.Id)
-
-	p.logger.Infof("deploying Orka VM with name %s", vmName)
-	vmResponse, err := p.orkaClient.DeployVM(ctx, vmName, p.envData.OrkaVMConfig)
+	p.logger.Infof("deploying Orka VM with name %s", runnerName)
+	vmResponse, err := p.orkaClient.DeployVM(ctx, runnerName, p.envData.OrkaVMConfig)
 	if err != nil {
 		return err
 	}
-	p.logger.Infof("deployed Orka VM with name %s", vmName)
+	p.logger.Infof("deployed Orka VM with name %s", runnerName)
 
-	defer func() {
-		p.logger.Infof("deleting Orka VM with name %s", vmName)
-		err = p.orkaClient.DeleteVM(ctx, vmName)
-		if err != nil {
-			p.logger.Infof("error while deleting Orka VM %s. More information: %s", vmName, err.Error())
-		} else {
-			p.logger.Infof("deleted Orka VM with name %s", vmName)
-		}
-	}()
+	defer p.DeprovisionRunner(ctx, runnerName)
 
 	vmCommandExecutor := &orka.VMCommandExecutor{
 		VMIP:         vmResponse.IP,
@@ -94,6 +83,16 @@ func (p *RunnerProvisioner) ProvisionJITRunner(ctx context.Context, runnerName s
 	}
 
 	return vmCommandExecutor.ExecuteCommands(buildCommands(jitConfig.EncodedJITConfig, vmConfigToAgentType[runnerType], p.envData.GitHubRunnerVersion, p.envData.OrkaVMUsername)...)
+}
+
+func (p *RunnerProvisioner) DeprovisionRunner(ctx context.Context, runnerName string) {
+	p.logger.Infof("deleting Orka VM with name %s", runnerName)
+	err := p.orkaClient.DeleteVM(ctx, runnerName)
+	if err != nil {
+		p.logger.Infof("error while deleting Orka VM %s. More information: %s", runnerName, err.Error())
+	} else {
+		p.logger.Infof("deleted Orka VM with name %s", runnerName)
+	}
 }
 
 func buildCommands(jitConfig, cpu, version, username string) []string {

@@ -26,7 +26,8 @@ type RunnerManager struct {
 }
 
 type RunnerProvisionerInterface interface {
-	ProvisionJITRunner(ctx context.Context, runnerName string) error
+	ProvisionRunner(ctx context.Context, name string) error
+	DeprovisionRunner(ctx context.Context, name string)
 }
 
 type RunnerMessageProcessor struct {
