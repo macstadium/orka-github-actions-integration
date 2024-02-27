@@ -33,7 +33,7 @@ func (client *OrkaClient) DeployVM(ctx context.Context, vmName, vmConfig string)
 }
 
 func (client *OrkaClient) DeleteVM(ctx context.Context, name string) error {
-	out, err := exec.ExecStringCommand("orka3", []string{"vm", "delete", name})
+	out, err := exec.ExecStringCommand("orka3", []string{"vm", "delete", name, "--namespace", client.envData.OrkaNamespace})
 	if out == fmt.Sprintf("Successfully deleted vm %s", name) {
 		return nil
 	}
