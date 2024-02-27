@@ -9,17 +9,17 @@ type LeveledLogger struct {
 }
 
 func (l *LeveledLogger) Error(msg string, keysAndValues ...interface{}) {
-	l.logger.With(keysAndValues...).Error(msg)
+	l.logger.Errorw(msg, keysAndValues...)
 }
 
 func (l *LeveledLogger) Info(msg string, keysAndValues ...interface{}) {
-	l.logger.With(keysAndValues...).Info(msg)
+	l.logger.Infow(msg, keysAndValues...)
 }
 
 func (l *LeveledLogger) Debug(msg string, keysAndValues ...interface{}) {
-	l.logger.With(keysAndValues...).Debug(msg)
+	l.logger.Debugw(msg, keysAndValues...)
 }
 
 func (l *LeveledLogger) Warn(msg string, keysAndValues ...interface{}) {
-	l.logger.With(keysAndValues...).Warn(msg)
+	l.logger.Warnw(msg, keysAndValues...)
 }

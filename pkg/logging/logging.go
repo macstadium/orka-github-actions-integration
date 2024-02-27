@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
 )
 
 const (
@@ -16,9 +17,10 @@ const (
 var Logger *zap.SugaredLogger
 
 func SetupLogger(logLevel string) {
-	var cfg zap.Config = zap.NewDevelopmentConfig()
+	var cfg zap.Config = zap.NewProductionConfig()
 
-	cfg.EncoderConfig.EncodeCaller = nil
+	cfg.DisableCaller = true
+	cfg.EncoderConfig.EncodeTime = zapcore.RFC3339TimeEncoder
 
 	switch logLevel {
 	case LogLevelDebug:

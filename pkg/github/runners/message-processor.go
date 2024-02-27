@@ -11,13 +11,13 @@ import (
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
 )
 
-func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerInterface, runnerProvisioner RunnerProvisionerInterface, runnerScaleSetName string) *RunnerMessageProcessor {
+func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerInterface, runnerProvisioner RunnerProvisionerInterface, runnerScaleSet *types.RunnerScaleSet) *RunnerMessageProcessor {
 	return &RunnerMessageProcessor{
 		ctx:                ctx,
 		runnerManager:      runnerManager,
 		runnerProvisioner:  runnerProvisioner,
-		logger:             logging.Logger,
-		runnerScaleSetName: runnerScaleSetName,
+		logger:             logging.Logger.Named(fmt.Sprintf("runner-message-processor-%d", runnerScaleSet.Id)),
+		runnerScaleSetName: runnerScaleSet.Name,
 		canceledJobs:       map[int64]bool{},
 	}
 }

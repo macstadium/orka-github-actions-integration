@@ -47,7 +47,7 @@ func NewClient(transport *ClientTransport) (*Client, error) {
 	}
 
 	retryClient := retryable.NewClient()
-	retryClient.Logger = &LeveledLogger{logger: logging.Logger}
+	retryClient.Logger = &LeveledLogger{logger: logging.Logger.Named("http-client")}
 
 	retryClient.RetryMax = client.retryMax
 	retryClient.RetryWaitMax = client.retryWaitMax

@@ -2,6 +2,7 @@ package provisioner
 
 import (
 	"context"
+	"fmt"
 	"strings"
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/env"
@@ -116,6 +117,6 @@ func NewRunnerProvisioner(runnerScaleSet *types.RunnerScaleSet, actionsClient ac
 		actionsClient:  actionsClient,
 		envData:        envData,
 		orkaClient:     orkaClient,
-		logger:         logging.Logger.Named("runner-provisioner"),
+		logger:         logging.Logger.Named(fmt.Sprintf("runner-provisioner-%d", runnerScaleSet.Id)),
 	}
 }

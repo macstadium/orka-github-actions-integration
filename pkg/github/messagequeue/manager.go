@@ -16,7 +16,7 @@ func NewMessageQueueManager(client actions.ActionsService, session *types.Runner
 	return &MessageQueueManager{
 		client:  client,
 		session: session,
-		logger:  logging.Logger.Named("session-client"),
+		logger:  logging.Logger.Named(fmt.Sprintf("session-client-%d", session.RunnerScaleSet.Id)),
 	}
 }
 

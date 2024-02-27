@@ -25,13 +25,15 @@ const (
 )
 
 func NewRunnerManager(ctx context.Context, client actions.ActionsService, runnerScaleSetId int) (*RunnerManager, error) {
+	logger := logging.Logger.Named(fmt.Sprintf("runner-manager-%d", runnerScaleSetId))
+
 	manager := RunnerManager{
-		logger:           logging.Logger.Named(fmt.Sprintf("runner-manager-%d", runnerScaleSetId)),
+		logger:           logger,
 		runnerScaleSetId: runnerScaleSetId,
 		actionsClient:    client,
 	}
 
-	session, err := createSessionWithRetry(ctx, logging.Logger, client, runnerScaleSetId)
+	session, err := createSessionWithRetry(ctx, logger, client, runnerScaleSetId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create session. %w", err)
 	}
