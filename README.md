@@ -1,6 +1,6 @@
 # Orka GitHub runner
 
-Orka GitHub runner is a tool that integrates with GitHub to provide demand-based solution for customer workflows.
+[Orka](https://www.macstadium.com/orka) GitHub runner is a tool that integrates with GitHub to provide demand-based solution for customer workflows.
 It leverages ephemeral runners to ensure real-time execution and dynamic scaling, eliminating the need for manual provisioning and maintenance of runners.
 
 ## Features
@@ -17,35 +17,10 @@ The Orka Runner application utilizes Runner scale sets in a manner similar to th
 
 Before using the Orka GitHub Runner, ensure that the following prerequisites are met:
 
-* GitHub App: Having a GitHub App is a prerequisite for using the Orka GitHub Runner. You can find instructions on creating a GitHub App in the [Creating a GitHub app](#creating-a-github-app) section below.
-* Connectivity to Orka cluster: Ensure that the machine where the Orka Github Runner is started has connectivity to an Orka cluster.
+* GitHub App: Having a GitHub App is a prerequisite for using the Orka GitHub Runner. You can find instructions on creating a GitHub App in the [Creating a GitHub app](docs/github-app-setup-steps.md) file.
+* Connectivity to Orka 3.0+ cluster: Ensure that the machine where the Orka Github Runner is started has connectivity to an Orka cluster.
 
-## Creating a GitHub app
-
-### Setup steps
-
-* Choose App Creation Method: Decide whether to create the app for your user account or an organization.
-* Create GitHub App:
-    * User Account: Click the [following link](https://github.com/settings/apps/new?url=https://github.com/macstadium/orka-github-actions-integration&webhook_active=false&public=false&actions=read&administration=write), which pre-fills the required permissions:
-
-        **Repository Permissions**
-        * Actions (read)
-        * Administration (read/write)
-        * Metadata (read)
-    * Organization: Replace `:org` with your organization name in the [following link](https://github.com/organizations/:org/settings/apps/new?url=https://github.com/macstadium/orka-github-actions-integration&webhook_active=false&public=false&administration=write&organization_self_hosted_runners=write&actions=read&checks=read), which pre-fills the required permissions:
-
-        **Repository Permissions**
-        * Actions (read)
-        * Metadata (read)
-
-        **Organization Permissions**
-        * Self-hosted runners (read/write)
-* Retrieve App ID: Locate the displayed App ID on the app's page.
-* Download Private Key: Click `Generate a private key` and download the file securely.
-* Install App: Navigate to the `Install App` tab and complete the installation for your user account or organization.
-* Retrieve Installation ID: Once you've successfully installed the app, locate the installation URL. It will look something like this: https://github.com/installations/1234567. Your Installation ID is the last number in the URL (in this case, 1234567).
-
-## Building the Orka GitHub runner
+## Setting up the Orka GitHub runner
 
 ### Environment variables
 
@@ -62,16 +37,34 @@ The Orka GitHub runner requires the following environment variabales to be confi
 * `RUNNERS`: A JSON array containing configuration details of the runners.
 * `LOG_LEVEL`: The logging level for the Orka GitHub Runner (e.g., debug, info, error).
 
-Using the provided `Makefile`, building and running the project can be done as follows:
+To start the Orka GitHub runner using Docker, you have two options:
+
+1. Provide all of the environment variables directly in the docker run command
 
 ```shell
-make run
+docker run -e GITHUB_APP_ID=<value> \
+    -e GITHUB_APP_INSTALLATION_ID=<value> \
+    -e GITHUB_APP_PRIVATE_KEY_PATH=<value> \
+    -e GITHUB_URL=<value> \
+    -e ORKA_URL=<value> \
+    -e ORKA_TOKEN=<value> \
+    -e ORKA_VM_CONFIG=<value> \
+    -e RUNNERS=<value> \
+    ghcr.io/macstadium/orka-github-actions-integration/orka-github-runner:<tag-name>
 ```
 
-## Running Tests
+2. Provide a .env file containing all the environment variables and mount it as a volume when running the Docker container:
 
-To run the tests locally, use the following command:
-
-```bash
-make test
+```shell
+docker run -v /path/to/.env:/.env ghcr.io/macstadium/orka-github-actions-integration/orka-github-runner:<tag-name>
 ```
+
+Replace <tag-name> with the version or tag of the Orka GitHub runner you want to use.
+
+## Contributing
+
+We welcome contributions to this project! Here's how you can get involved:
+
+1. <b>Reporting Bugs</b>: If you encounter any issues while using the Orka GitHub Runner, please open an issue on the repository. Be sure to include as much detail as possible to help us diagnose and address the problem.
+1. <b>Requesting Features</b>: Have an idea for a new feature or enhancement? Feel free to submit a feature request on the repository. We value your feedback and ideas for improving the project.
+1. <b>Submitting Pull Requests</b>: If you're interested in contributing code to the project, we encourage you to fork the repository, create a new branch, and submit a pull request with your changes. Make sure to follow our contribution guidelines to streamline the process.
