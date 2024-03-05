@@ -34,6 +34,11 @@ type RunnersListResponse struct {
 	Runners []RunnerScaleSet `json:"value"`
 }
 
+type RunnerReferenceList struct {
+	Count            int               `json:"count"`
+	RunnerReferences []RunnerReference `json:"value"`
+}
+
 type RunnerScaleSetSession struct {
 	SessionId               *uuid.UUID               `json:"sessionId,omitempty"`
 	OwnerName               string                   `json:"ownerName,omitempty"`

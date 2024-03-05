@@ -56,7 +56,7 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context, runnerName stri
 	}
 	p.logger.Infof("deployed Orka VM with name %s", runnerName)
 
-	defer p.DeprovisionRunner(ctx, runnerName)
+	defer p.deleteVM(ctx, runnerName)
 
 	vmCommandExecutor := &orka.VMCommandExecutor{
 		VMIP:         vmResponse.IP,
@@ -70,6 +70,23 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context, runnerName stri
 }
 
 func (p *RunnerProvisioner) DeprovisionRunner(ctx context.Context, runnerName string) {
+	p.logger.Infof("deleting runner with name %s", runnerName)
+	runner, err := p.actionsClient.GetRunner(ctx, runnerName)
+	if err != nil || runner == nil {
+		p.logger.Infof("unable to find runner with name %s", runnerName)
+	} else {
+		err = p.actionsClient.DeleteRunner(ctx, runner.Id)
+		if err != nil {
+			p.logger.Infof("error while deleting runner %s. More information: %s", runnerName, err.Error())
+		} else {
+			p.logger.Infof("deleted runner with name %s", runnerName)
+		}
+	}
+
+	p.deleteVM(ctx, runnerName)
+}
+
+func (p *RunnerProvisioner) deleteVM(ctx context.Context, runnerName string) {
 	p.logger.Infof("deleting Orka VM with name %s", runnerName)
 	err := p.orkaClient.DeleteVM(ctx, runnerName)
 	if err != nil {
