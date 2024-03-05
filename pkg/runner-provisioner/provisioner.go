@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/env"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/actions"
@@ -21,6 +22,9 @@ type RunnerProvisioner struct {
 
 	orkaClient orka.OrkaService
 	logger     *zap.SugaredLogger
+
+	mu                sync.Mutex
+	runnerToJitConfig map[string]*types.RunnerScaleSetJitRunnerConfig
 }
 
 var commands_template = []string{
@@ -40,7 +44,7 @@ var commands_template = []string{
 }
 
 func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context, runnerName string) error {
-	jitConfig, err := p.actionsClient.GenerateJITRunnerConfig(ctx, p.runnerScaleSet.Id, runnerName)
+	jitConfig, err := p.createRunner(ctx, runnerName)
 	if err != nil {
 		return err
 	}
@@ -73,6 +77,27 @@ func (p *RunnerProvisioner) DeprovisionRunner(ctx context.Context, runnerName st
 	} else {
 		p.logger.Infof("deleted Orka VM with name %s", runnerName)
 	}
+
+	delete(p.runnerToJitConfig, runnerName)
+}
+
+func (p *RunnerProvisioner) createRunner(ctx context.Context, runnerName string) (*types.RunnerScaleSetJitRunnerConfig, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	if p.runnerToJitConfig[runnerName] != nil {
+		return p.runnerToJitConfig[runnerName], nil
+	}
+
+	jitConfig, err := p.actionsClient.GenerateJITRunnerConfig(ctx, p.runnerScaleSet.Id, runnerName)
+	if err != nil {
+		return nil, err
+	}
+
+	p.runnerToJitConfig[runnerName] = jitConfig
+
+	return jitConfig, nil
+
 }
 
 func buildCommands(jitConfig, version, username string) []string {
@@ -91,10 +116,11 @@ func buildCommands(jitConfig, version, username string) []string {
 
 func NewRunnerProvisioner(runnerScaleSet *types.RunnerScaleSet, actionsClient actions.ActionsService, orkaClient orka.OrkaService, envData *env.Data) *RunnerProvisioner {
 	return &RunnerProvisioner{
-		runnerScaleSet: runnerScaleSet,
-		actionsClient:  actionsClient,
-		envData:        envData,
-		orkaClient:     orkaClient,
-		logger:         logging.Logger.Named(fmt.Sprintf("runner-provisioner-%d", runnerScaleSet.Id)),
+		runnerScaleSet:    runnerScaleSet,
+		actionsClient:     actionsClient,
+		envData:           envData,
+		orkaClient:        orkaClient,
+		logger:            logging.Logger.Named(fmt.Sprintf("runner-provisioner-%d", runnerScaleSet.Id)),
+		runnerToJitConfig: make(map[string]*types.RunnerScaleSetJitRunnerConfig),
 	}
 }
