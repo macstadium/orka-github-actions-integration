@@ -106,7 +106,7 @@ func (p *RunnerProvisioner) createRunner(ctx context.Context, runnerName string)
 		return p.runnerToJitConfig[runnerName], nil
 	}
 
-	jitConfig, err := p.actionsClient.GenerateJITRunnerConfig(ctx, p.runnerScaleSet.Id, runnerName)
+	jitConfig, err := p.actionsClient.CreateRunner(ctx, p.runnerScaleSet.Id, runnerName)
 	if err != nil {
 		return nil, err
 	}
