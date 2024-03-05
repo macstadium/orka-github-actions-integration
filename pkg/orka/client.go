@@ -15,8 +15,6 @@ import (
 type OrkaService interface {
 	DeployVM(ctx context.Context, vmName, vmConfig string) (*OrkaVMDeployResponseModel, error)
 	DeleteVM(ctx context.Context, name string) error
-	GetVMConfig(ctx context.Context, name string) (*OrkaVMConfigResponseModel, error)
-	GetImage(ctx context.Context, name string) (*OrkaImageResponseModel, error)
 }
 
 type OrkaClient struct {
@@ -39,36 +37,6 @@ func (client *OrkaClient) DeleteVM(ctx context.Context, name string) error {
 	}
 
 	return err
-}
-
-func (client *OrkaClient) GetVMConfig(ctx context.Context, name string) (*OrkaVMConfigResponseModel, error) {
-	res, err := exec.ExecJSONCommand[[]*OrkaVMConfigResponseModel]("orka3", []string{"vm-config", "list", "-o", "json"})
-	if err != nil {
-		return nil, err
-	}
-
-	for _, config := range *res {
-		if config.Name == name {
-			return config, nil
-		}
-	}
-
-	return nil, fmt.Errorf("failed to get VM config %s", name)
-}
-
-func (client *OrkaClient) GetImage(ctx context.Context, name string) (*OrkaImageResponseModel, error) {
-	res, err := exec.ExecJSONCommand[[]*OrkaImageResponseModel]("orka3", []string{"image", "list", "-o", "json"})
-	if err != nil {
-		return nil, err
-	}
-
-	for _, image := range *res {
-		if image.Name == name {
-			return image, nil
-		}
-	}
-
-	return nil, fmt.Errorf("failed to get image %s", name)
 }
 
 func NewOrkaClient(envData *env.Data, ctx context.Context) (*OrkaClient, error) {

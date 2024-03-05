@@ -23,15 +23,12 @@ type RunnerProvisioner struct {
 	logger     *zap.SugaredLogger
 }
 
-var vmConfigToAgentType = map[string]string{
-	"amd64": "x64",
-	"arm64": "arm64",
-}
-
 var commands_template = []string{
-	"echo 'Downloading Git Action Runner from https://github.com/actions/runner/releases/download/v$VERSION/actions-runner-osx-$CPU-$VERSION.tar.gz'",
+	"source ~/.bashrc",
+	"set -e",
+	"echo \"Downloading Git Action Runner from https://github.com/actions/runner/releases/download/v$VERSION/actions-runner-osx-$(uname -m | sed 's/86_//')-$VERSION.tar.gz\"",
 	"mkdir -p /Users/$USERNAME/actions-runner",
-	"curl -o /Users/$USERNAME/actions-runner/actions-runner.tar.gz -L https://github.com/actions/runner/releases/download/v$VERSION/actions-runner-osx-$CPU-$VERSION.tar.gz",
+	"curl -o /Users/$USERNAME/actions-runner/actions-runner.tar.gz -L https://github.com/actions/runner/releases/download/v$VERSION/actions-runner-osx-$(uname -m | sed 's/86_//')-$VERSION.tar.gz",
 	"echo 'Git Action Runner download completed'",
 	"echo 'Unarchiving Git Action Runner /Users/$USERNAME/actions-runner/actions-runner.tar.gz'",
 	"cd /Users/$USERNAME/actions-runner",
@@ -43,24 +40,6 @@ var commands_template = []string{
 }
 
 func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context, runnerName string) error {
-	vmConfig, err := p.orkaClient.GetVMConfig(ctx, p.envData.OrkaVMConfig)
-	if err != nil {
-		return err
-	}
-
-	runnerType := vmConfig.Type
-
-	if runnerType == "" {
-		image, err := p.orkaClient.GetImage(ctx, vmConfig.Image)
-		if err != nil {
-			return err
-		}
-
-		runnerType = image.Type
-	}
-
-	p.logger.Infof("found VM config %v", vmConfig)
-
 	jitConfig, err := p.actionsClient.GenerateJITRunnerConfig(ctx, p.runnerScaleSet.Id, runnerName)
 	if err != nil {
 		return err
@@ -83,7 +62,7 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context, runnerName stri
 		VMPassword:   p.envData.OrkaVMPassword,
 	}
 
-	return vmCommandExecutor.ExecuteCommands(buildCommands(jitConfig.EncodedJITConfig, vmConfigToAgentType[runnerType], p.envData.GitHubRunnerVersion, p.envData.OrkaVMUsername)...)
+	return vmCommandExecutor.ExecuteCommands(buildCommands(jitConfig.EncodedJITConfig, p.envData.GitHubRunnerVersion, p.envData.OrkaVMUsername)...)
 }
 
 func (p *RunnerProvisioner) DeprovisionRunner(ctx context.Context, runnerName string) {
@@ -96,13 +75,12 @@ func (p *RunnerProvisioner) DeprovisionRunner(ctx context.Context, runnerName st
 	}
 }
 
-func buildCommands(jitConfig, cpu, version, username string) []string {
+func buildCommands(jitConfig, version, username string) []string {
 	commands := utils.Map(
 		commands_template,
 		func(cmd string) string {
 			result := strings.ReplaceAll(cmd, "$JITCONFIG", jitConfig)
 			result = strings.ReplaceAll(result, "$VERSION", version)
-			result = strings.ReplaceAll(result, "$CPU", cpu)
 			result = strings.ReplaceAll(result, "$USERNAME", username)
 
 			return result
