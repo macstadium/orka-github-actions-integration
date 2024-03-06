@@ -2,6 +2,7 @@ package orka
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -12,11 +13,12 @@ import (
 )
 
 type VMCommandExecutor struct {
-	VMIP         string
-	VMPort       int
-	VMConfigName string
-	VMUsername   string
-	VMPassword   string
+	VMIP       string
+	VMPort     int
+	VMName     string
+	VMUsername string
+	VMPassword string
+	Context    context.Context
 }
 
 const (
@@ -33,7 +35,7 @@ func (executor *VMCommandExecutor) ExecuteCommands(commands ...string) error {
 		Timeout: time.Second * 10,
 	}
 
-	client, err := connectWithRetries(sshConfig, fmt.Sprintf("%s:%d", executor.VMIP, executor.VMPort))
+	client, err := executor.connectWithRetries(sshConfig, fmt.Sprintf("%s:%d", executor.VMIP, executor.VMPort))
 	if err != nil {
 		return err
 	}
@@ -56,7 +58,7 @@ func (executor *VMCommandExecutor) ExecuteCommands(commands ...string) error {
 	}
 
 	format := func(out string) string {
-		return fmt.Sprintf("[VM] - %s - %s: %s\n", time.Now().Format(time.RFC3339), executor.VMConfigName, out)
+		return fmt.Sprintf("[VM] - %s - %s: %s\n", time.Now().Format(time.RFC3339), executor.VMName, out)
 	}
 
 	go printFormattedOutput(stdout, format)
@@ -95,17 +97,23 @@ func printFormattedOutput(reader io.Reader, format FormatFunc) {
 	}
 }
 
-func connectWithRetries(cfg *ssh.ClientConfig, addr string) (*ssh.Client, error) {
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		client, err := ssh.Dial("tcp", addr, cfg)
-		if err == nil {
-			return client, nil
+func (executor *VMCommandExecutor) connectWithRetries(cfg *ssh.ClientConfig, addr string) (*ssh.Client, error) {
+	attempt := 1
+	for {
+		select {
+		case <-executor.Context.Done():
+			return nil, fmt.Errorf("failed to connect to VM: context canceled while attempting to dial %s after %d attempts", addr, attempt)
+		case <-time.After(3 * time.Second):
+			if attempt > maxRetries {
+				return nil, fmt.Errorf("failed to connect to VM after %d attempts", maxRetries)
+			}
+			client, err := ssh.Dial("tcp", addr, cfg)
+			if err == nil {
+				return client, nil
+			}
+
+			fmt.Printf("Failed to connect to VM (attempt %d): %v\n", attempt, err)
+			attempt++
 		}
-
-		fmt.Printf("Failed to connect to VM (attempt %d): %v\n", attempt, err)
-
-		time.Sleep(3 * time.Second)
 	}
-
-	return nil, fmt.Errorf("failed to connect to VM after %d attempts", maxRetries)
 }
