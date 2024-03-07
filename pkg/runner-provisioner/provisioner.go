@@ -36,7 +36,6 @@ type RunnerProvisioner struct {
 }
 
 var commands_template = []string{
-	"source ~/.bashrc",
 	"set -e",
 	"echo \"Downloading Git Action Runner from https://github.com/actions/runner/releases/download/v$VERSION/actions-runner-osx-$(uname -m | sed 's/86_//')-$VERSION.tar.gz\"",
 	"mkdir -p /Users/$USERNAME/actions-runner",
