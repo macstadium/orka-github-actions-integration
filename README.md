@@ -18,11 +18,11 @@ The Orka Runner application utilizes Runner scale sets in a manner similar to th
 Before using the Orka GitHub Runner, ensure that the following prerequisites are met:
 
 * GitHub App: Having a GitHub App is a prerequisite for using the Orka GitHub Runner. You can find instructions on creating a GitHub App in the [Creating a GitHub app](docs/github-app-setup-steps.md) file.
-* Connectivity to Orka 3.0+ cluster: Ensure that the machine where the Orka Github Runner is started has connectivity to an Orka cluster.
+* Connectivity to Orka 3.0+ cluster: Ensure that the machine where the Orka Github Runner is started has connectivity to the Orka cluster.
 
 ## Setting up the Orka GitHub runner
 
-You can get the Orka GitHub runner by downloading it from [this link](https://github.com/macstadium/orka-github-actions-integration/pkgs/container/orka-github-actions-integration%2Forka-github-runner).
+You can get the Orka GitHub runner by downloading it from [this link](https://github.com/macstadium/orka-github-actions-integration/pkgs/container/orka-github-actions-integration%2Forka-github-runner). You will be able to execute the runner (via `docker run`) from any machine that has connectivity to the Orka cluster
 
 ### Environment variables
 
