@@ -22,6 +22,8 @@ Before using the Orka GitHub Runner, ensure that the following prerequisites are
 
 ## Setting up the Orka GitHub runner
 
+You can get the Orka GitHub runner by downloading it from [this link](https://github.com/macstadium/orka-github-actions-integration/pkgs/container/orka-github-actions-integration%2Forka-github-runner).
+
 ### Environment variables
 
 The Orka GitHub runner requires the following environment variabales to be configured:
