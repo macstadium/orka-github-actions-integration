@@ -52,13 +52,13 @@ docker run -e GITHUB_APP_ID=<value> \
     -e ORKA_TOKEN=<value> \
     -e ORKA_VM_CONFIG=<value> \
     -e RUNNERS=<value> \
-    ghcr.io/macstadium/orka-github-actions-integration/orka-github-runner:<tag-name>
+    ghcr.io/macstadium/orka-github-runner:<tag-name>
 ```
 
 2. Provide a .env file containing all the environment variables and mount it as a volume when running the Docker container:
 
 ```shell
-docker run -v /path/to/.env:/.env ghcr.io/macstadium/orka-github-actions-integration/orka-github-runner:<tag-name>
+docker run -v /path/to/.env:/.env ghcr.io/macstadium/orka-github-runner:<tag-name>
 ```
 
 Replace <tag-name> with the version or tag of the Orka GitHub runner you want to use.
