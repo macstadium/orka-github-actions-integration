@@ -22,7 +22,7 @@ Before using the Orka GitHub Runner, ensure that the following prerequisites are
 
 ## Setting up the Orka GitHub runner
 
-You can get the Orka GitHub runner by downloading it from [this link](https://github.com/macstadium/orka-github-actions-integration/pkgs/container/orka-github-actions-integration%2Forka-github-runner). You will be able to execute the runner (via `docker run`) from any machine that has connectivity to the Orka cluster
+You can get the Orka GitHub runner by downloading it from [this link](https://github.com/macstadium/orka-github-actions-integration/pkgs/container/orka-github-runner). You will be able to execute the runner (via `docker run`) from any machine that has connectivity to the Orka cluster
 
 ### Environment variables
 
