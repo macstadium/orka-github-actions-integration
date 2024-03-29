@@ -12,6 +12,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
+	"github.com/macstadium/orka-github-actions-integration/pkg/version"
 )
 
 type Runner struct {
@@ -46,7 +47,7 @@ func ParseEnv() *Data {
 	envData := &Data{
 		GitHubAppPrivateKey: os.Getenv(GitHubAppPrivateKeyEnvName),
 		GitHubURL:           os.Getenv(GitHubURLEnvName),
-		GitHubRunnerVersion: getEnvWithDefault(GitHubRunnerVersionEnvName, "2.312.0"),
+		GitHubRunnerVersion: os.Getenv(GitHubRunnerVersionEnvName),
 
 		OrkaURL:   os.Getenv(OrkaURLEnvName),
 		OrkaToken: os.Getenv(OrkaTokenEnvName),
@@ -84,6 +85,14 @@ func ParseEnv() *Data {
 			}
 
 			envData.GitHubAppPrivateKey = string(privateKeyContent)
+		}
+	}
+
+	if envData.GitHubRunnerVersion == "" {
+		if latestVersion, err := version.GetLatestRunnerVersion(); err != nil {
+			errors = append(errors, err.Error())
+		} else {
+			envData.GitHubRunnerVersion = latestVersion.String()
 		}
 	}
 
