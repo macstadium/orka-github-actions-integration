@@ -2,7 +2,7 @@ FROM golang:1.21.6 as builder
 
 WORKDIR /workspace
 
-ARG ORKA_VERSION=3.0.1
+ARG ORKA_VERSION=3.1.0
 
 # Make it runnable on a distroless image/without libc
 ENV CGO_ENABLED=0

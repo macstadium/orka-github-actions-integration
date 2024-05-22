@@ -34,6 +34,9 @@ type Data struct {
 	OrkaVMUsername string
 	OrkaVMPassword string
 
+	OrkaEnableNodeIPMapping bool
+	OrkaNodeIPMapping       map[string]string
+
 	Runners []Runner
 
 	LogLevel string
@@ -56,6 +59,8 @@ func ParseEnv() *Data {
 		OrkaVMConfig:   os.Getenv(OrkaVMConfigEnvName),
 		OrkaVMUsername: getEnvWithDefault(OrkaVMUsernameEnvName, "admin"),
 		OrkaVMPassword: getEnvWithDefault(OrkaVMPasswordEnvName, "admin"),
+
+		OrkaEnableNodeIPMapping: getBoolEnv(OrkaEnableNodeIPMappingEnvName, false),
 
 		LogLevel: getEnvWithDefault(LogLevelEnvName, logging.LogLevelInfo),
 	}
@@ -85,6 +90,17 @@ func ParseEnv() *Data {
 			}
 
 			envData.GitHubAppPrivateKey = string(privateKeyContent)
+		}
+	}
+
+	if envData.OrkaEnableNodeIPMapping {
+		err := json.Unmarshal([]byte(os.Getenv(OrkaNodeIPMappingEnvName)), &envData.OrkaNodeIPMapping)
+		if err != nil {
+			errors = append(errors, err.Error())
+		}
+
+		if len(envData.OrkaNodeIPMapping) == 0 {
+			errors = append(errors, "please provide at least one node IP mapping in order to use public IPs functionality")
 		}
 	}
 
@@ -119,6 +135,16 @@ func getEnvWithDefault(envName string, defaultValue string) string {
 	} else {
 		return defaultValue
 	}
+}
+
+func getBoolEnv(key string, fallback bool) bool {
+	value := os.Getenv(key)
+
+	if len(value) == 0 {
+		return fallback
+	}
+
+	return strings.ToLower(value) == "true"
 }
 
 func getRunnersFromEnv() ([]Runner, error) {

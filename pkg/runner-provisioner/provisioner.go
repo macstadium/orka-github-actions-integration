@@ -65,10 +65,15 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context, runnerName stri
 
 	defer p.deleteVM(ctx, runnerName)
 
+	vmIP, err := p.getRealVMIP(vmResponse.IP)
+	if err != nil {
+		return err
+	}
+
 	cancelContext := p.createCancelContext(ctx, runnerName)
 
 	vmCommandExecutor := &orka.VMCommandExecutor{
-		VMIP:       vmResponse.IP,
+		VMIP:       vmIP,
 		VMPort:     *vmResponse.SSH,
 		VMName:     runnerName,
 		VMUsername: p.envData.OrkaVMUsername,
@@ -77,6 +82,18 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context, runnerName stri
 	}
 
 	return vmCommandExecutor.ExecuteCommands(buildCommands(jitConfig.EncodedJITConfig, p.envData.GitHubRunnerVersion, p.envData.OrkaVMUsername)...)
+}
+
+func (p *RunnerProvisioner) getRealVMIP(vmIP string) (string, error) {
+	if !p.envData.OrkaEnableNodeIPMapping {
+		return vmIP, nil
+	}
+
+	if p.envData.OrkaNodeIPMapping[vmIP] == "" {
+		return "", fmt.Errorf("unable to retrieve VM IP from the provided node IP mapping")
+	}
+
+	return p.envData.OrkaNodeIPMapping[vmIP], nil
 }
 
 func (p *RunnerProvisioner) DeprovisionRunner(ctx context.Context, runnerName string) {
