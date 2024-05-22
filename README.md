@@ -37,6 +37,8 @@ The Orka GitHub runner requires the following environment variabales to be confi
 * `ORKA_VM_USERNAME`: Specifies the username for the deployed VMs. If no value is provided, it defaults to admin.
 * `ORKA_VM_PASSWORD`: Specifies the password for the deployed VMs. If no value is provided, it defaults to admin.
 * `RUNNERS`: A JSON array containing configuration details of the runners.
+* `ORKA_ENABLE_NODE_IP_MAPPING`: Specifies whether to enable the mapping of Orka node IPs to external IPs.
+* `ORKA_NODE_IP_MAPPING`: Defines the mapping of Orka node internal IPs to external host IPs.
 * `LOG_LEVEL`: The logging level for the Orka GitHub Runner (e.g., debug, info, error).
 
 To start the Orka GitHub runner using Docker, you have two options:
