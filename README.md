@@ -68,8 +68,8 @@ Replace <tag-name> with the version or tag of the Orka GitHub runner you want to
 Upgrading the Orka GitHub plugin to the latest version ensures you have the latest features and bug fixes. Follow these steps to upgrade the plugin:
 1. <b>Check for updates</b>: Visit [the Orka GitHub packages page](https://github.com/macstadium/orka-github-actions-integration/pkgs/container/orka-github-runner) to find the latest version of the plugin.
 1. <b>Download latest release</b>: Use the command `docker pull ghcr.io/macstadium/orka-github-runner:<version>` to download the latest release of the Orka GitHub plugin.
-1. <b>Stop previous instance(s)</b>: Ensure that any existing instances of the Orka GitHub plugin are stopped on your machine before proceeding with the upgrade.
 1. <b>Check for running GitHub CI jobs</b>: Before proceeding, verify that there are no active CI jobs that are currently running.
+1. <b>Stop previous instance(s)</b>: Ensure that any existing instances of the Orka GitHub plugin are stopped on your machine before proceeding with the upgrade.
 1. <b>Review changelog</b>: Check the changelog for any additional requirements or changes in configuration that may be needed for the new version.
 1. <b>Start new plugin version</b>: Execute the necessary docker run commands(mentioned in the previous section) to start the new docker image with the upgraded plugin.
 
