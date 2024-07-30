@@ -81,7 +81,14 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context, runnerName stri
 		Context:    cancelContext.context,
 	}
 
-	return vmCommandExecutor.ExecuteCommands(buildCommands(jitConfig.EncodedJITConfig, p.envData.GitHubRunnerVersion, p.envData.OrkaVMUsername)...)
+	err = vmCommandExecutor.ExecuteCommands(buildCommands(jitConfig.EncodedJITConfig, p.envData.GitHubRunnerVersion, p.envData.OrkaVMUsername)...)
+	if err != nil {
+		return err
+	}
+
+	delete(p.runnerToJitConfig, runnerName)
+
+	return nil
 }
 
 func (p *RunnerProvisioner) getRealVMIP(vmIP string) (string, error) {
@@ -112,6 +119,8 @@ func (p *RunnerProvisioner) DeprovisionRunner(ctx context.Context, runnerName st
 
 	p.deleteVM(ctx, runnerName)
 
+	delete(p.runnerToJitConfig, runnerName)
+
 	if p.runnerToCancelContext[runnerName] != nil {
 		p.runnerToCancelContext[runnerName].cancel()
 		delete(p.runnerToCancelContext, runnerName)
@@ -126,8 +135,6 @@ func (p *RunnerProvisioner) deleteVM(ctx context.Context, runnerName string) {
 	} else {
 		p.logger.Infof("deleted Orka VM with name %s", runnerName)
 	}
-
-	delete(p.runnerToJitConfig, runnerName)
 }
 
 func (p *RunnerProvisioner) createRunner(ctx context.Context, runnerName string) (*types.RunnerScaleSetJitRunnerConfig, error) {
@@ -146,7 +153,6 @@ func (p *RunnerProvisioner) createRunner(ctx context.Context, runnerName string)
 	p.runnerToJitConfig[runnerName] = jitConfig
 
 	return jitConfig, nil
-
 }
 
 func (p *RunnerProvisioner) createCancelContext(ctx context.Context, runnerName string) *CancelContext {
