@@ -65,6 +65,8 @@ func ParseEnv() *Data {
 		LogLevel: getEnvWithDefault(LogLevelEnvName, logging.LogLevelInfo),
 	}
 
+	envData.OrkaURL = strings.TrimSuffix(envData.OrkaURL, "/")
+
 	errors := []string{}
 
 	if appID, err := strconv.ParseInt(os.Getenv(GitHubAppIDEnvName), 10, 64); err != nil {
