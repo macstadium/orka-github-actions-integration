@@ -167,7 +167,7 @@ func validateEnv(envData *Data) []string {
 		errors = append(errors, fmt.Sprintf("%s env is required and must be set to the GitHub repository or organization URL, for example, 'https://github.com/your-username/your-repository'", GitHubURLEnvName))
 	}
 
-	if !regexp.MustCompile(`^http?://.+`).MatchString(envData.OrkaURL) {
+	if !regexp.MustCompile(`^https?://.+`).MatchString(envData.OrkaURL) {
 		errors = append(errors, fmt.Sprintf("%s env is required and must be set to the Orka API URL of the Orka cluster, for example, `http://10.221.188.20`", OrkaURLEnvName))
 	}
 
