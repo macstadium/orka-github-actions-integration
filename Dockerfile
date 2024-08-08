@@ -20,13 +20,11 @@ COPY . .
 
 RUN make build
 
-FROM gcr.io/distroless/static:nonroot
+FROM alpine:latest
 
 WORKDIR /
 
 COPY --from=builder /workspace/bin/app /app
 COPY --from=builder /usr/local/bin/orka3 /usr/local/bin/orka3
-
-USER 65532:65532
 
 ENTRYPOINT ["/app"]
