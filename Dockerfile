@@ -27,4 +27,8 @@ WORKDIR /
 COPY --from=builder /workspace/bin/app /app
 COPY --from=builder /usr/local/bin/orka3 /usr/local/bin/orka3
 
+RUN addgroup -S appgroup && adduser -S orka -G appgroup
+
+USER orka
+
 ENTRYPOINT ["/app"]
