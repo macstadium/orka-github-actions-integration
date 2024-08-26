@@ -31,4 +31,7 @@ RUN addgroup -S appgroup && adduser -S orka -G appgroup
 
 USER orka
 
+# We need to export this environment variable here to ensure that the runner can be automatically deployed into a Kubernetes cluster.
+ENV KUBECONFIG=/home/orka/.kube/config
+
 ENTRYPOINT ["/app"]
