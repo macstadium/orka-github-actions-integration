@@ -15,6 +15,7 @@ const (
 	OrkaVMConfigEnvName   = "ORKA_VM_CONFIG"
 	OrkaVMUsernameEnvName = "ORKA_VM_USERNAME"
 	OrkaVMPasswordEnvName = "ORKA_VM_PASSWORD"
+	OrkaVMMetadataEnvName = "ORKA_VM_METADATA"
 
 	OrkaEnableNodeIPMappingEnvName = "ORKA_ENABLE_NODE_IP_MAPPING"
 	OrkaNodeIPMappingEnvName       = "ORKA_NODE_IP_MAPPING"

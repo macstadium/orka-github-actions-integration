@@ -34,6 +34,7 @@ The Orka GitHub runner requires the configuration of specific environment variab
 * `ORKA_VM_CONFIG`: The name of the VM config that will be used when deploying Orka virtual machines. The config defines various aspects of the virtual machine's setup, such as CPU, memory, and others. The config can be created using the command 'orka3 vmc create --image <image-name>'.
 * `ORKA_VM_USERNAME`: Specifies the username for the deployed VMs. If no value is provided, it defaults to admin.
 * `ORKA_VM_PASSWORD`: Specifies the password for the deployed VMs. If no value is provided, it defaults to admin.
+* `ORKA_VM_METADATA`: Specifies custom VM metadata passed to the VM. Must be formatted as key=value comma separated string
 * `ORKA_ENABLE_NODE_IP_MAPPING`: Specifies whether to enable the mapping of Orka node IPs to external IPs.
 * `ORKA_NODE_IP_MAPPING`: Defines the mapping of Orka node internal IPs to external host IPs.
 * `RUNNERS`: A JSON array containing configuration details of the GitHub runner scale set that will be created. While it is structured as an array, currently only one runner is supported. See [here](#how-to-use-multiple-runners) how to use multiple runners. Example usage: `RUNNERS='[{"name":"my-github-runner"}]'`. The "name" field in the JSON object corresponds to the name of the GitHub runner instance. <b>This name should match the value specified in the "runs-on" field in your workflow configuration.</b> [See the examples/ci.yml](examples/ci.yml) for an exact example.

@@ -33,6 +33,7 @@ type Data struct {
 	OrkaVMConfig   string
 	OrkaVMUsername string
 	OrkaVMPassword string
+	OrkaVMMetadata string
 
 	OrkaEnableNodeIPMapping bool
 	OrkaNodeIPMapping       map[string]string
@@ -59,6 +60,7 @@ func ParseEnv() *Data {
 		OrkaVMConfig:   os.Getenv(OrkaVMConfigEnvName),
 		OrkaVMUsername: getEnvWithDefault(OrkaVMUsernameEnvName, "admin"),
 		OrkaVMPassword: getEnvWithDefault(OrkaVMPasswordEnvName, "admin"),
+		OrkaVMMetadata: getEnvWithDefault(OrkaVMMetadataEnvName, ""),
 
 		OrkaEnableNodeIPMapping: getBoolEnv(OrkaEnableNodeIPMappingEnvName, false),
 
@@ -179,5 +181,14 @@ func validateEnv(envData *Data) []string {
 		errors = append(errors, fmt.Sprintf("%s env is required and must be set to a valid and existing VM config in the Orka cluster", OrkaVMConfigEnvName))
 	}
 
+	if envData.OrkaVMMetadata != "" && !validateMetadata(envData.OrkaVMMetadata) {
+		errors = append(errors, fmt.Sprintf("%s must be formatted as key=value comma separated string", OrkaVMMetadataEnvName))
+	}
+
 	return errors
+}
+
+func validateMetadata(metadata string) bool {
+	r, _ := regexp.Compile(`^(\w+=\w+)(,\s*\w+=\w+)*$`)
+	return r.MatchString(metadata)
 }

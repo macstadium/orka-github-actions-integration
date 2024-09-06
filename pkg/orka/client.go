@@ -22,7 +22,12 @@ type OrkaClient struct {
 }
 
 func (client *OrkaClient) DeployVM(ctx context.Context, vmName, vmConfig string) (*OrkaVMDeployResponseModel, error) {
-	res, err := exec.ExecJSONCommand[[]*OrkaVMDeployResponseModel]("orka3", []string{"vm", "deploy", vmName, "--config", vmConfig, "-o", "json", "--namespace", client.envData.OrkaNamespace})
+	args := []string{"vm", "deploy", vmName, "--config", vmConfig, "-o", "json", "--namespace", client.envData.OrkaNamespace}
+	if client.envData.OrkaVMMetadata != "" {
+		args = append(args, "--metadata", client.envData.OrkaVMMetadata)
+	}
+
+	res, err := exec.ExecJSONCommand[[]*OrkaVMDeployResponseModel]("orka3", args)
 	if err != nil {
 		return nil, err
 	}
