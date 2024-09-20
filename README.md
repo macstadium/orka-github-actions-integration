@@ -19,6 +19,7 @@ Before using the Orka GitHub Runner, ensure that the following prerequisites are
 
 * GitHub App: Having a GitHub App is a prerequisite for using the Orka GitHub Runner. You can find instructions on creating a GitHub App in the [Creating a GitHub app](docs/github-app-setup-steps.md) file.
 * Connectivity to Orka 3.0+ cluster: Ensure that the machine where the Orka Github Runner is started has connectivity to the Orka cluster. Additionally, ensure that the SSH ports are open to enable the runner to establish SSH connections with Orka VMs.
+* The Orka GitHub runner supports GitHub.com hosted environments. GitHub Enterprise Server is not a supported environment. 
 
 ## Setting up the Orka GitHub runner
 
