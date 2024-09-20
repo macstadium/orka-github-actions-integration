@@ -1,0 +1,54 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: orka-github-runner-config
+  namespace: orka-github-runner
+data:
+  GITHUB_APP_ID: "<github-app-id>"
+  GITHUB_APP_INSTALLATION_ID: "<github-app-installation-id>"
+  GITHUB_APP_PRIVATE_KEY_PATH: /private-key.pem
+  GITHUB_URL: <github-url>
+  ORKA_URL: <orka-url>
+  ORKA_TOKEN: <orka-token>
+  ORKA_VM_CONFIG: orka-runner
+  RUNNERS: '[{"name":"<orka-github-runner-name>"}]'
+  ORKA_NAMESPACE: orka-default
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orka-github-runner
+  namespace: orka-github-runner
+  labels:
+    app: orka-github-runner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: orka-github-runner
+  template:
+    metadata:
+      labels:
+        app: orka-github-runner
+    spec:
+      containers:
+      - name: orka-github-runner
+        image: ghcr.io/macstadium/orka-github-runner:1.1.3-amd64
+        envFrom:
+        - configMapRef:
+            name: orka-github-runner-config
+        volumeMounts:
+        - name: private-key-volume
+          mountPath: /private-key.pem
+          subPath: <private-key-subpath> # my-orka-test-app.2024-05-29.private-key.pem
+      imagePullSecrets:
+      - name: ghcr-secret
+      volumes:
+      - name: private-key-volume
+        secret:
+          secretName: my-private-key
+      tolerations:
+      - key: orka.macstadium.com/namespace-reserved
+        operator: Equal
+        value: orka-github-runner
+        effect: NoSchedule
