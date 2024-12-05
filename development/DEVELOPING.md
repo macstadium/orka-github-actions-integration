@@ -10,7 +10,7 @@ This guide provides information about how to build, package, and run the plugin 
 
 ## Build Requirements
 
-- [Go 1.21.6][golang]
+- [Go 1.23.0][golang]
 
 Ensure you have Go installed before proceeding with the build steps.
 

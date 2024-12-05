@@ -2,6 +2,7 @@ package github_test
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/github"
 	. "github.com/onsi/ginkgo/v2"
@@ -88,7 +89,7 @@ var _ = Describe("GitHub Config", func() {
 				config, err := github.NewGitHubConfig(invalidURL)
 
 				Expect(config).To(BeNil())
-				Expect(err.Error()).To(Equal(fmt.Sprintf("%q: invalid config URL, should point to an organization or repository", invalidURL)))
+				Expect(err.Error()).To(Equal(fmt.Sprintf("%q: invalid config URL, should point to an organization or repository", strings.Trim(invalidURL, "/"))))
 			})
 		}
 	})

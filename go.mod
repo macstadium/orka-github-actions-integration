@@ -1,6 +1,6 @@
 module github.com/macstadium/orka-github-actions-integration
 
-go 1.21.6
+go 1.23.0
 
 require (
 	github.com/golang-jwt/jwt/v4 v4.5.0

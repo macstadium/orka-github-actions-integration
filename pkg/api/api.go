@@ -35,7 +35,7 @@ func RequestJSON[Req any, Res any](ctx context.Context, client *http.Client, met
 			return nil, err
 		}
 
-		return nil, fmt.Errorf(string(body))
+		return nil, fmt.Errorf("%s", string(body))
 	}
 
 	responseModel := new(Res)
