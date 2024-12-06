@@ -17,6 +17,7 @@ import (
 	"github.com/macstadium/orka-github-actions-integration/pkg/orka"
 	provisioner "github.com/macstadium/orka-github-actions-integration/pkg/runner-provisioner"
 	"go.uber.org/zap"
+	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 var runnerScaleSetIDs = []int{}
@@ -36,6 +37,10 @@ func main() {
 	}
 
 	runnerName := envData.Runners[0].Name
+
+	if len(validation.IsValidLabelValue(runnerName)) > 0 || len(validation.IsDNS1035Label(runnerName)) > 0 {
+		panic(fmt.Sprintf("invalid runner name: %s. Runner name must consist of lower case alphanumeric characters or ' - ', start with an alphabetic character, end with an alphanumeric character, and may not be longer than 63 characters.", runnerName))
+	}
 
 	actionsClient, err := actions.NewActionsClient(ctx, envData, config)
 	if err != nil {
