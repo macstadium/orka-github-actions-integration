@@ -64,6 +64,8 @@ docker run -v /path/to/.env:/.env ghcr.io/macstadium/orka-github-runne-private:<
 
 Replace <tag-name> with the version or tag of the Orka GitHub runner you want to use.
 
+> **NOTE**: The private key must be in PKCS#1 RSA private key format. See [here](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/managing-private-keys-for-github-apps#generating-private-keys) for more information. If needed, convert the private key to the correct format: `ssh-keygen -p -m pem -f /path/to/private-key.pem`
+
 #### How to use multiple runners
 
 Currently, our setup supports only one runner scale set. However, if you need to have multiple runner scale sets, you can achieve this by running multiple instances of the Orka GitHub runner and providing the runner configuration for each of them. Each instance would have its own unique runner name specified in the RUNNERS environment variable.

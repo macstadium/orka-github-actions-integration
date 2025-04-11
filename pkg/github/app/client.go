@@ -52,7 +52,7 @@ func createJWTForGitHubApp(appID int64, privateKeyContent string) (string, error
 
 	privateKey, err := jwt.ParseRSAPrivateKeyFromPEM([]byte(privateKeyContent))
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("error parsing PKCS#1 RSA private key: %v", err)
 	}
 
 	return token.SignedString(privateKey)
