@@ -3,6 +3,8 @@
 [Orka](https://www.macstadium.com/orka) GitHub runner is a tool that integrates with GitHub to provide demand-based solution for customer workflows.
 It leverages ephemeral runners to ensure real-time execution and dynamic scaling, eliminating the need for manual provisioning and maintenance of runners.
 
+> **NOTE**: This project is not affiliated with the original [Actions Runner Controller (ARC)](https://github.com/actions/actions-runner-controller) project but uses portions of its code under the terms of the Apache License 2.0.
+
 ## Features
 
 * **Real-time execution:** Ephemeral runners are spun up on demand, ensuring that customer workflows are executed instantly without delays.
@@ -98,3 +100,9 @@ We welcome contributions to this project! Here's how you can get involved:
 1. <b>Reporting Bugs</b>: If you encounter any issues while using the Orka GitHub Runner, please open an issue on the repository. Be sure to include as much detail as possible to help us diagnose and address the problem.
 1. <b>Requesting Features</b>: Have an idea for a new feature or enhancement? Feel free to submit a feature request on the repository. We value your feedback and ideas for improving the project.
 1. <b>Submitting Pull Requests</b>: If you're interested in contributing code to the project, we encourage you to fork the repository, create a new branch, and submit a pull request with your changes. Make sure to follow our contribution guidelines to streamline the process.
+
+## License
+
+This project is licensed under the Apache License 2.0. Portions of the code are derived from the [ARC project](https://github.com/actions/actions-runner-controller), also licensed under Apache 2.0.
+
+See the [NOTICE](./NOTICE) and [LICENSE](./LICENSE) files for more details.
