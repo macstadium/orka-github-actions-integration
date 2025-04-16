@@ -1,0 +1,4 @@
+This project includes code from the [Actions Runner Controller (ARC)](https://github.com/actions/actions-runner-controller) project,
+licensed under the Apache License, Version 2.0 (http://www.apache.org/licenses/LICENSE-2.0).
+
+Modifications have been made to the original source.
