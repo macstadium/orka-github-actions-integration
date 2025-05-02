@@ -15,6 +15,12 @@ import (
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
 )
 
+const (
+	cancelledStatus = "canceled"
+	ignoredStatus   = "ignored"
+	abandonedStatus = "abandoned"
+)
+
 func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerInterface, runnerProvisioner RunnerProvisionerInterface, runnerScaleSet *types.RunnerScaleSet) *RunnerMessageProcessor {
 	return &RunnerMessageProcessor{
 		ctx:                ctx,
@@ -126,7 +132,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 
 			p.logger.Infof("Job completed message received for RunnerRequestId: %d, RunnerId: %d, RunnerName: %s, with Result: %s", jobCompleted.RunnerRequestId, jobCompleted.RunnerId, jobCompleted.RunnerName, jobCompleted.Result)
 
-			if jobCompleted.Result == "canceled" {
+			if jobCompleted.Result == cancelledStatus || jobCompleted.Result == ignoredStatus || jobCompleted.Result == abandonedStatus {
 				p.canceledJobs[jobCompleted.RunnerRequestId] = true
 				p.runnerProvisioner.DeprovisionRunner(p.ctx, fmt.Sprintf("%s-%d-%d", p.runnerScaleSetName, jobCompleted.RunnerRequestId, jobCompleted.WorkflowRunId))
 			}
