@@ -51,11 +51,6 @@ var commands_template = []string{
 }
 
 func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context, runnerName string) error {
-	jitConfig, err := p.createRunner(ctx, runnerName)
-	if err != nil {
-		return err
-	}
-
 	p.logger.Infof("deploying Orka VM with name %s", runnerName)
 	vmResponse, err := p.orkaClient.DeployVM(ctx, runnerName, p.envData.OrkaVMConfig)
 	if err != nil {
@@ -69,6 +64,13 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context, runnerName stri
 	if err != nil {
 		return err
 	}
+
+	p.logger.Infof("creating runner with name %s", runnerName)
+	jitConfig, err := p.createRunner(ctx, runnerName)
+	if err != nil {
+		return err
+	}
+	p.logger.Infof("created runner with name %s", runnerName)
 
 	cancelContext := p.createCancelContext(ctx, runnerName)
 
