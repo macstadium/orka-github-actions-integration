@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      publishImage:
+        description: "Publish Orka runner image to GitHub registry"
+        type: boolean
+        default: false
+        required: false
+
+env:
+  GOLANG_VERSION: "1.23.0"
+  GHCR_REPO: ghcr.io/macstadium/orka-github-runner
+
+jobs:
+  ci:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 5
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Install golang
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GOLANG_VERSION }}
+
+      - name: Check for unused packages
+        run: |
+          make tidy
+          git diff --exit-code
+
+      - name: Format code
+        run: |
+          make fmt
+          git diff --exit-code
+
+      - name: Lint code
+        run: make lint
+
+      - name: Run unit tests
+        run: make test
+  deploy:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    if: github.event.inputs.publishImage == 'true' || github.ref == 'refs/heads/main'
+    needs: ci
+    steps:
+      - name: Check out the repo
+        uses: actions/checkout@v4
+
+      - name: Create image tag
+        id: create_tag
+        run: |
+          DATE_TAG=$(date '+%Y-%m-%d')-$(git rev-parse --short=8 HEAD)-$(cat .version)-dev
+
+          branch_name=${GITHUB_REF#refs/heads/}
+          BRANCH_TAG=${branch_name//\//-}-dev
+
+          TAGS="$GHCR_REPO:$DATE_TAG,$GHCR_REPO:$BRANCH_TAG"
+          echo "tags=${TAGS}" >> $GITHUB_OUTPUT
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+
+      - name: Push to GitHub Packages
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: Dockerfile
+          tags: ${{ steps.create_tag.outputs.tags }}
+          platforms: linux/amd64,linux/arm64
+          build-args: |
+            ORKA_VERSION=3.2.0
+          push: true
+          provenance: false
+        env:
+          DOCKER_BUILDKIT: 1
