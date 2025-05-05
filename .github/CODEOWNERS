@@ -1,0 +1,5 @@
+# NOTE: order of rules is important!
+# last matching rule takes precedence
+
+# dev-maintainers are default global owners
+* @macstadium/dev-maintainers
