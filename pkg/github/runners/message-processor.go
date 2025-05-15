@@ -95,7 +95,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 			if err := json.Unmarshal(message, &jobAvailable); err != nil {
 				return fmt.Errorf("could not decode job available message. %w", err)
 			}
-			p.logger.Infof("Job available message received for RunnerRequestId: %d", jobAvailable.RunnerRequestId)
+			p.logger.Infof("Job available message received for JobId: %s, RunnerRequestId: %d", jobAvailable.JobId, jobAvailable.RunnerRequestId)
 			availableJobs = append(availableJobs, jobAvailable.RunnerRequestId)
 		case "JobAssigned":
 			var jobAssigned types.JobAssigned
@@ -103,7 +103,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 				return fmt.Errorf("could not decode job assigned message. %w", err)
 			}
 
-			p.logger.Infof("Job assigned message received for RunnerRequestId: %d", jobAssigned.RunnerRequestId)
+			p.logger.Infof("Job assigned message received for JobId: %s, RunnerRequestId: %d", jobAssigned.JobId, jobAssigned.RunnerRequestId)
 
 			go func() {
 				jobId := jobAssigned.JobId
@@ -129,14 +129,14 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 			if err := json.Unmarshal(message, &jobStarted); err != nil {
 				return fmt.Errorf("could not decode job started message. %w", err)
 			}
-			p.logger.Infof("Job started message received for RunnerRequestId: %d and RunnerId: %d", jobStarted.RunnerRequestId, jobStarted.RunnerId)
+			p.logger.Infof("Job started message received for JobId: %s, RunnerRequestId: %d, RunnerId: %d", jobStarted.JobId, jobStarted.RunnerRequestId, jobStarted.RunnerId)
 		case "JobCompleted":
 			var jobCompleted types.JobCompleted
 			if err := json.Unmarshal(message, &jobCompleted); err != nil {
 				return fmt.Errorf("could not decode job completed message. %w", err)
 			}
 
-			p.logger.Infof("Job completed message received for RunnerRequestId: %d, RunnerId: %d, RunnerName: %s, with Result: %s", jobCompleted.RunnerRequestId, jobCompleted.RunnerId, jobCompleted.RunnerName, jobCompleted.Result)
+			p.logger.Infof("Job completed message received for JobId: %s, RunnerRequestId: %d, RunnerId: %d, RunnerName: %s, with Result: %s", jobCompleted.JobId, jobCompleted.RunnerRequestId, jobCompleted.RunnerId, jobCompleted.RunnerName, jobCompleted.Result)
 
 			if jobCompleted.JobId != "" && (jobCompleted.Result == cancelledStatus || jobCompleted.Result == ignoredStatus || jobCompleted.Result == abandonedStatus) {
 				p.canceledJobs[jobCompleted.JobId] = true
