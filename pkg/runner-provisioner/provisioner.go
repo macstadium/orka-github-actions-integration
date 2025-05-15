@@ -15,11 +15,6 @@ import (
 	"go.uber.org/zap"
 )
 
-type CancelContext struct {
-	context context.Context
-	cancel  context.CancelFunc
-}
-
 type RunnerProvisioner struct {
 	runnerScaleSet *types.RunnerScaleSet
 	actionsClient  actions.ActionsService
@@ -29,9 +24,6 @@ type RunnerProvisioner struct {
 	logger     *zap.SugaredLogger
 
 	mu sync.Mutex
-
-	cancelContextLock     sync.Mutex
-	runnerToCancelContext map[string]*CancelContext
 }
 
 var commands_template = []string{
@@ -73,15 +65,12 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) error {
 	}
 	p.logger.Infof("created runner with name %s", runnerName)
 
-	cancelContext := p.createCancelContext(ctx, runnerName)
-
 	vmCommandExecutor := &orka.VMCommandExecutor{
 		VMIP:       vmIP,
 		VMPort:     *vmResponse.SSH,
 		VMName:     runnerName,
 		VMUsername: p.envData.OrkaVMUsername,
 		VMPassword: p.envData.OrkaVMPassword,
-		Context:    cancelContext.context,
 	}
 
 	err = vmCommandExecutor.ExecuteCommands(buildCommands(jitConfig.EncodedJITConfig, p.envData.GitHubRunnerVersion, p.envData.OrkaVMUsername)...)
@@ -102,28 +91,6 @@ func (p *RunnerProvisioner) getRealVMIP(vmIP string) (string, error) {
 	}
 
 	return p.envData.OrkaNodeIPMapping[vmIP], nil
-}
-
-func (p *RunnerProvisioner) DeprovisionRunner(ctx context.Context, runnerName string) {
-	p.logger.Infof("deleting runner with name %s", runnerName)
-	runner, err := p.actionsClient.GetRunner(ctx, runnerName)
-	if err != nil || runner == nil {
-		p.logger.Infof("unable to find runner with name %s", runnerName)
-	} else {
-		err = p.actionsClient.DeleteRunner(ctx, runner.Id)
-		if err != nil {
-			p.logger.Infof("error while deleting runner %s. More information: %s", runnerName, err.Error())
-		} else {
-			p.logger.Infof("deleted runner with name %s", runnerName)
-		}
-	}
-
-	p.deleteVM(ctx, runnerName)
-
-	if p.runnerToCancelContext[runnerName] != nil {
-		p.runnerToCancelContext[runnerName].cancel()
-		delete(p.runnerToCancelContext, runnerName)
-	}
 }
 
 func (p *RunnerProvisioner) deleteVM(ctx context.Context, runnerName string) {
@@ -148,21 +115,6 @@ func (p *RunnerProvisioner) createRunner(ctx context.Context, runnerName string)
 	return jitConfig, nil
 }
 
-func (p *RunnerProvisioner) createCancelContext(ctx context.Context, runnerName string) *CancelContext {
-	p.cancelContextLock.Lock()
-	defer p.cancelContextLock.Unlock()
-
-	if p.runnerToCancelContext[runnerName] == nil {
-		cancelContext, cancel := context.WithCancel(ctx)
-		p.runnerToCancelContext[runnerName] = &CancelContext{
-			context: cancelContext,
-			cancel:  cancel,
-		}
-	}
-
-	return p.runnerToCancelContext[runnerName]
-}
-
 func buildCommands(jitConfig, version, username string) []string {
 	commands := utils.Map(
 		commands_template,
@@ -179,11 +131,10 @@ func buildCommands(jitConfig, version, username string) []string {
 
 func NewRunnerProvisioner(runnerScaleSet *types.RunnerScaleSet, actionsClient actions.ActionsService, orkaClient orka.OrkaService, envData *env.Data) *RunnerProvisioner {
 	return &RunnerProvisioner{
-		runnerScaleSet:        runnerScaleSet,
-		actionsClient:         actionsClient,
-		envData:               envData,
-		orkaClient:            orkaClient,
-		logger:                logging.Logger.Named(fmt.Sprintf("runner-provisioner-%d", runnerScaleSet.Id)),
-		runnerToCancelContext: make(map[string]*CancelContext),
+		runnerScaleSet: runnerScaleSet,
+		actionsClient:  actionsClient,
+		envData:        envData,
+		orkaClient:     orkaClient,
+		logger:         logging.Logger.Named(fmt.Sprintf("runner-provisioner-%d", runnerScaleSet.Id)),
 	}
 }
