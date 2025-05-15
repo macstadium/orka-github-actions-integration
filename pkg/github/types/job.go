@@ -50,7 +50,7 @@ type JobMessageType struct {
 
 type JobMessageBase struct {
 	JobMessageType
-	JobId              int64     `json:"jobId"`
+	JobId              string    `json:"jobId"`
 	RunnerRequestId    int64     `json:"runnerRequestId"`
 	RepositoryName     string    `json:"repositoryName"`
 	OwnerName          string    `json:"ownerName"`

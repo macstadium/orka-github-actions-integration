@@ -19,6 +19,7 @@ const (
 	cancelledStatus = "canceled"
 	ignoredStatus   = "ignored"
 	abandonedStatus = "abandoned"
+	defaultJobId    = "missing-job-id"
 )
 
 func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerInterface, runnerProvisioner RunnerProvisionerInterface, runnerScaleSet *types.RunnerScaleSet) *RunnerMessageProcessor {
@@ -28,7 +29,7 @@ func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerI
 		runnerProvisioner:  runnerProvisioner,
 		logger:             logging.Logger.Named(fmt.Sprintf("runner-message-processor-%d", runnerScaleSet.Id)),
 		runnerScaleSetName: runnerScaleSet.Name,
-		canceledJobs:       map[int64]bool{},
+		canceledJobs:       map[string]bool{},
 	}
 }
 
@@ -105,7 +106,12 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 			p.logger.Infof("Job assigned message received for RunnerRequestId: %d", jobAssigned.RunnerRequestId)
 
 			go func() {
-				for attempt := 1; !p.canceledJobs[jobAssigned.JobId]; attempt++ {
+				jobId := jobAssigned.JobId
+				if jobId == "" {
+					jobId = defaultJobId
+				}
+
+				for attempt := 1; !p.canceledJobs[jobId]; attempt++ {
 					err := p.runnerProvisioner.ProvisionRunner(p.ctx)
 					if err == nil {
 						break
@@ -116,7 +122,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 					time.Sleep(15 * time.Second)
 				}
 
-				delete(p.canceledJobs, jobAssigned.JobId)
+				delete(p.canceledJobs, jobId)
 			}()
 		case "JobStarted":
 			var jobStarted types.JobStarted
@@ -133,7 +139,9 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 			p.logger.Infof("Job completed message received for RunnerRequestId: %d, RunnerId: %d, RunnerName: %s, with Result: %s", jobCompleted.RunnerRequestId, jobCompleted.RunnerId, jobCompleted.RunnerName, jobCompleted.Result)
 
 			if jobCompleted.Result == cancelledStatus || jobCompleted.Result == ignoredStatus || jobCompleted.Result == abandonedStatus {
-				p.canceledJobs[jobCompleted.JobId] = true
+				if jobCompleted.JobId != "" {
+					p.canceledJobs[jobCompleted.JobId] = true
+				}
 				p.runnerProvisioner.DeprovisionRunner(p.ctx, jobCompleted.RunnerName)
 			}
 		default:
