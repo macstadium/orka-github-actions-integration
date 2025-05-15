@@ -2,7 +2,6 @@ package orka
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"io"
 	"net"
@@ -18,7 +17,6 @@ type VMCommandExecutor struct {
 	VMName     string
 	VMUsername string
 	VMPassword string
-	Context    context.Context
 }
 
 const (
@@ -98,22 +96,20 @@ func printFormattedOutput(reader io.Reader, format FormatFunc) {
 }
 
 func (executor *VMCommandExecutor) connectWithRetries(cfg *ssh.ClientConfig, addr string) (*ssh.Client, error) {
-	attempt := 1
-	for {
-		select {
-		case <-executor.Context.Done():
-			return nil, fmt.Errorf("failed to connect to VM: context canceled while attempting to dial %s after %d attempts", addr, attempt)
-		case <-time.After(3 * time.Second):
-			if attempt > maxRetries {
-				return nil, fmt.Errorf("failed to connect to VM after %d attempts", maxRetries)
-			}
-			client, err := ssh.Dial("tcp", addr, cfg)
-			if err == nil {
-				return client, nil
-			}
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		client, err := ssh.Dial("tcp", addr, cfg)
+		if err == nil {
+			return client, nil
+		}
 
-			fmt.Printf("Failed to connect to VM (attempt %d): %v\n", attempt, err)
-			attempt++
+		fmt.Printf("Failed to connect to VM (attempt %d/%d): %v\n", attempt, maxRetries, err)
+
+		if attempt < maxRetries {
+			time.Sleep(3 * time.Second)
+		} else {
+			return nil, fmt.Errorf("failed to connect to VM after %d attempts: %v", maxRetries, err)
 		}
 	}
+
+	return nil, fmt.Errorf("failed to connect to VM")
 }

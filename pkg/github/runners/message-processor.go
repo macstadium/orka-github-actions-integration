@@ -138,11 +138,8 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 
 			p.logger.Infof("Job completed message received for RunnerRequestId: %d, RunnerId: %d, RunnerName: %s, with Result: %s", jobCompleted.RunnerRequestId, jobCompleted.RunnerId, jobCompleted.RunnerName, jobCompleted.Result)
 
-			if jobCompleted.Result == cancelledStatus || jobCompleted.Result == ignoredStatus || jobCompleted.Result == abandonedStatus {
-				if jobCompleted.JobId != "" {
-					p.canceledJobs[jobCompleted.JobId] = true
-				}
-				p.runnerProvisioner.DeprovisionRunner(p.ctx, jobCompleted.RunnerName)
+			if jobCompleted.JobId != "" && (jobCompleted.Result == cancelledStatus || jobCompleted.Result == ignoredStatus || jobCompleted.Result == abandonedStatus) {
+				p.canceledJobs[jobCompleted.JobId] = true
 			}
 		default:
 			p.logger.Infof("unknown job message type %s", messageType.MessageType)
