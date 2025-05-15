@@ -82,6 +82,9 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 
 	p.logger.Infof("process batched runner scale set job messages with id %d and batch size %d", message.MessageId, len(batchedMessages))
 
+	requiredRunners := message.Statistics.TotalAssignedJobs - message.Statistics.TotalRegisteredRunners
+	provisionedRunners := 0
+
 	var availableJobs []int64
 	for _, message := range batchedMessages {
 		var messageType types.JobMessageType
@@ -105,25 +108,29 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 
 			p.logger.Infof("Job assigned message received for JobId: %s, RunnerRequestId: %d", jobAssigned.JobId, jobAssigned.RunnerRequestId)
 
-			go func() {
-				jobId := jobAssigned.JobId
-				if jobId == "" {
-					jobId = defaultJobId
-				}
-
-				for attempt := 1; !p.canceledJobs[jobId]; attempt++ {
-					err := p.runnerProvisioner.ProvisionRunner(p.ctx)
-					if err == nil {
-						break
+			if provisionedRunners < requiredRunners {
+				provisionedRunners++
+				p.logger.Infof("number of runners provisioning started: %d. Max required runners: %d", provisionedRunners, requiredRunners)
+				go func() {
+					jobId := jobAssigned.JobId
+					if jobId == "" {
+						jobId = defaultJobId
 					}
 
-					p.logger.Errorf("unable to provision Orka runner for %s (attempt %d). More information: %s", p.runnerScaleSetName, attempt, err.Error())
+					for attempt := 1; !p.canceledJobs[jobId]; attempt++ {
+						err := p.runnerProvisioner.ProvisionRunner(p.ctx)
+						if err == nil {
+							break
+						}
 
-					time.Sleep(15 * time.Second)
-				}
+						p.logger.Errorf("unable to provision Orka runner for %s (attempt %d). More information: %s", p.runnerScaleSetName, attempt, err.Error())
 
-				delete(p.canceledJobs, jobId)
-			}()
+						time.Sleep(15 * time.Second)
+					}
+
+					delete(p.canceledJobs, jobId)
+				}()
+			}
 		case "JobStarted":
 			var jobStarted types.JobStarted
 			if err := json.Unmarshal(message, &jobStarted); err != nil {
