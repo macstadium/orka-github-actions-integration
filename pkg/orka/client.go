@@ -13,7 +13,7 @@ import (
 )
 
 type OrkaService interface {
-	DeployVM(ctx context.Context, vmName, vmConfig string) (*OrkaVMDeployResponseModel, error)
+	DeployVM(ctx context.Context, namePrefix, vmConfig string) (*OrkaVMDeployResponseModel, error)
 	DeleteVM(ctx context.Context, name string) error
 }
 
@@ -21,8 +21,8 @@ type OrkaClient struct {
 	envData *env.Data
 }
 
-func (client *OrkaClient) DeployVM(ctx context.Context, vmName, vmConfig string) (*OrkaVMDeployResponseModel, error) {
-	args := []string{"vm", "deploy", vmName, "--config", vmConfig, "-o", "json", "--namespace", client.envData.OrkaNamespace}
+func (client *OrkaClient) DeployVM(ctx context.Context, namePrefix, vmConfig string) (*OrkaVMDeployResponseModel, error) {
+	args := []string{"vm", "deploy", namePrefix, "--config", vmConfig, "--generate-name", "-o", "json", "--namespace", client.envData.OrkaNamespace}
 	if client.envData.OrkaVMMetadata != "" {
 		args = append(args, "--metadata", client.envData.OrkaVMMetadata)
 	}

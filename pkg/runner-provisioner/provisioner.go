@@ -50,12 +50,14 @@ var commands_template = []string{
 	"echo 'Git Action Runner exited'",
 }
 
-func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context, runnerName string) error {
-	p.logger.Infof("deploying Orka VM with name %s", runnerName)
-	vmResponse, err := p.orkaClient.DeployVM(ctx, runnerName, p.envData.OrkaVMConfig)
+func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) error {
+	p.logger.Infof("deploying Orka VM with prefix  %s", p.runnerScaleSet.Name)
+	vmResponse, err := p.orkaClient.DeployVM(ctx, p.runnerScaleSet.Name, p.envData.OrkaVMConfig)
 	if err != nil {
 		return err
 	}
+
+	runnerName := vmResponse.Name
 	p.logger.Infof("deployed Orka VM with name %s", runnerName)
 
 	defer p.deleteVM(ctx, runnerName)
