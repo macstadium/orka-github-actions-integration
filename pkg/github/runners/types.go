@@ -30,7 +30,7 @@ type RunnerManager struct {
 }
 
 type RunnerProvisionerInterface interface {
-	ProvisionRunner(ctx context.Context, name string) error
+	ProvisionRunner(ctx context.Context) error
 	DeprovisionRunner(ctx context.Context, name string)
 }
 

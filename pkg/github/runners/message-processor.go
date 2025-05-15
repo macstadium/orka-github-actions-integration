@@ -106,7 +106,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 
 			go func() {
 				for attempt := 1; !p.canceledJobs[jobAssigned.RunnerRequestId]; attempt++ {
-					err := p.runnerProvisioner.ProvisionRunner(p.ctx, fmt.Sprintf("%s-%d-%d", p.runnerScaleSetName, jobAssigned.RunnerRequestId, jobAssigned.WorkflowRunId))
+					err := p.runnerProvisioner.ProvisionRunner(p.ctx)
 					if err == nil {
 						break
 					}
@@ -134,7 +134,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 
 			if jobCompleted.Result == cancelledStatus || jobCompleted.Result == ignoredStatus || jobCompleted.Result == abandonedStatus {
 				p.canceledJobs[jobCompleted.RunnerRequestId] = true
-				p.runnerProvisioner.DeprovisionRunner(p.ctx, fmt.Sprintf("%s-%d-%d", p.runnerScaleSetName, jobCompleted.RunnerRequestId, jobCompleted.WorkflowRunId))
+				p.runnerProvisioner.DeprovisionRunner(p.ctx, jobCompleted.RunnerName)
 			}
 		default:
 			p.logger.Infof("unknown job message type %s", messageType.MessageType)
