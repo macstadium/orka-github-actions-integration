@@ -28,8 +28,7 @@ type RunnerProvisioner struct {
 	orkaClient orka.OrkaService
 	logger     *zap.SugaredLogger
 
-	mu                sync.Mutex
-	runnerToJitConfig map[string]*types.RunnerScaleSetJitRunnerConfig
+	mu sync.Mutex
 
 	cancelContextLock     sync.Mutex
 	runnerToCancelContext map[string]*CancelContext
@@ -90,8 +89,6 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) error {
 		return err
 	}
 
-	delete(p.runnerToJitConfig, runnerName)
-
 	return nil
 }
 
@@ -123,8 +120,6 @@ func (p *RunnerProvisioner) DeprovisionRunner(ctx context.Context, runnerName st
 
 	p.deleteVM(ctx, runnerName)
 
-	delete(p.runnerToJitConfig, runnerName)
-
 	if p.runnerToCancelContext[runnerName] != nil {
 		p.runnerToCancelContext[runnerName].cancel()
 		delete(p.runnerToCancelContext, runnerName)
@@ -145,16 +140,10 @@ func (p *RunnerProvisioner) createRunner(ctx context.Context, runnerName string)
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.runnerToJitConfig[runnerName] != nil {
-		return p.runnerToJitConfig[runnerName], nil
-	}
-
 	jitConfig, err := p.actionsClient.CreateRunner(ctx, p.runnerScaleSet.Id, runnerName)
 	if err != nil {
 		return nil, err
 	}
-
-	p.runnerToJitConfig[runnerName] = jitConfig
 
 	return jitConfig, nil
 }
@@ -195,7 +184,6 @@ func NewRunnerProvisioner(runnerScaleSet *types.RunnerScaleSet, actionsClient ac
 		envData:               envData,
 		orkaClient:            orkaClient,
 		logger:                logging.Logger.Named(fmt.Sprintf("runner-provisioner-%d", runnerScaleSet.Id)),
-		runnerToJitConfig:     make(map[string]*types.RunnerScaleSetJitRunnerConfig),
 		runnerToCancelContext: make(map[string]*CancelContext),
 	}
 }
