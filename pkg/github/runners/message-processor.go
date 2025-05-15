@@ -105,7 +105,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 			p.logger.Infof("Job assigned message received for RunnerRequestId: %d", jobAssigned.RunnerRequestId)
 
 			go func() {
-				for attempt := 1; !p.canceledJobs[jobAssigned.RunnerRequestId]; attempt++ {
+				for attempt := 1; !p.canceledJobs[jobAssigned.JobId]; attempt++ {
 					err := p.runnerProvisioner.ProvisionRunner(p.ctx)
 					if err == nil {
 						break
@@ -116,7 +116,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 					time.Sleep(15 * time.Second)
 				}
 
-				delete(p.canceledJobs, jobAssigned.RunnerRequestId)
+				delete(p.canceledJobs, jobAssigned.JobId)
 			}()
 		case "JobStarted":
 			var jobStarted types.JobStarted
@@ -133,7 +133,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 			p.logger.Infof("Job completed message received for RunnerRequestId: %d, RunnerId: %d, RunnerName: %s, with Result: %s", jobCompleted.RunnerRequestId, jobCompleted.RunnerId, jobCompleted.RunnerName, jobCompleted.Result)
 
 			if jobCompleted.Result == cancelledStatus || jobCompleted.Result == ignoredStatus || jobCompleted.Result == abandonedStatus {
-				p.canceledJobs[jobCompleted.RunnerRequestId] = true
+				p.canceledJobs[jobCompleted.JobId] = true
 				p.runnerProvisioner.DeprovisionRunner(p.ctx, jobCompleted.RunnerName)
 			}
 		default:
