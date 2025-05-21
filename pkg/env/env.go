@@ -11,6 +11,7 @@ import (
 	"log"
 
 	"github.com/joho/godotenv"
+	"github.com/macstadium/orka-github-actions-integration/pkg/constants"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
 	"github.com/macstadium/orka-github-actions-integration/pkg/version"
 )
@@ -24,6 +25,7 @@ type Data struct {
 	GitHubAppInstallationID int64
 	GitHubAppPrivateKey     string
 	GitHubURL               string
+	GithubAPIUrl            string
 	GitHubRunnerVersion     string
 
 	OrkaURL   string
@@ -51,6 +53,7 @@ func ParseEnv() *Data {
 	envData := &Data{
 		GitHubAppPrivateKey: os.Getenv(GitHubAppPrivateKeyEnvName),
 		GitHubURL:           os.Getenv(GitHubURLEnvName),
+		GithubAPIUrl:        os.Getenv(GitHubAPIURLEnvName),
 		GitHubRunnerVersion: os.Getenv(GitHubRunnerVersionEnvName),
 
 		OrkaURL:   os.Getenv(OrkaURLEnvName),
@@ -70,6 +73,15 @@ func ParseEnv() *Data {
 	envData.OrkaURL = strings.TrimSuffix(envData.OrkaURL, "/")
 
 	errors := []string{}
+
+	if envData.GitHubURL == "" {
+		errors = append(errors, fmt.Sprintf("Github URL is required. Please provide either a Github URL with organization using %s env variable", GitHubURLEnvName))
+
+	}
+
+	if envData.GithubAPIUrl == "" {
+		envData.GithubAPIUrl = constants.BaseGitHubAPIPath
+	}
 
 	if appID, err := strconv.ParseInt(os.Getenv(GitHubAppIDEnvName), 10, 64); err != nil {
 		errors = append(errors, fmt.Sprintf("%s is not set to a valid number: %s", GitHubAppIDEnvName, err))
@@ -165,7 +177,7 @@ func getRunnersFromEnv() ([]Runner, error) {
 func validateEnv(envData *Data) []string {
 	errors := []string{}
 
-	if !regexp.MustCompile(`^https?://github.com/.+`).MatchString(envData.GitHubURL) {
+	if !regexp.MustCompile(`^https?://.+`).MatchString(envData.GitHubURL) {
 		errors = append(errors, fmt.Sprintf("%s env is required and must be set to the GitHub repository or organization URL, for example, 'https://github.com/your-username/your-repository'", GitHubURLEnvName))
 	}
 

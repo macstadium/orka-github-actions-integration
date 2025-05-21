@@ -6,6 +6,7 @@ const (
 	GitHubAppPrivateKeyPathEnvName = "GITHUB_APP_PRIVATE_KEY_PATH"
 	GitHubAppPrivateKeyEnvName     = "GITHUB_APP_PRIVATE_KEY"
 	GitHubURLEnvName               = "GITHUB_URL"
+	GitHubAPIURLEnvName            = "GITHUB_API_URL"
 	GitHubRunnerVersionEnvName     = "GITHUB_RUNNER_VERSION"
 
 	OrkaURLEnvName   = "ORKA_URL"

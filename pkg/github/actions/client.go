@@ -97,7 +97,7 @@ func (client *ActionsClient) updateTokenIfNeeded(ctx context.Context) error {
 		return fmt.Errorf("failed to get app access token on refresh: %w", err)
 	}
 
-	authInfo, err := auth.GetAuthorizationInfo(ctx, accessToken, client.gitHubConfig)
+	authInfo, err := auth.GetAuthorizationInfo(ctx, accessToken, client.envData, client.gitHubConfig)
 	if err != nil {
 		return fmt.Errorf("failed to get actions service admin authentication info on refresh: %w", err)
 	}
@@ -140,7 +140,7 @@ func NewActionsClient(ctx context.Context, envData *env.Data, config *github.Git
 		return nil, fmt.Errorf("failed to get access token from app: %w", err)
 	}
 
-	authInfo, err := auth.GetAuthorizationInfo(ctx, accessToken, config)
+	authInfo, err := auth.GetAuthorizationInfo(ctx, accessToken, envData, config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get actions service auth info: %w", err)
 	}
