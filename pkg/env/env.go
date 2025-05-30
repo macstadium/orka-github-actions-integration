@@ -123,7 +123,7 @@ func ParseEnv() *Data {
 	}
 
 	if envData.GitHubRunnerVersion == "" {
-		if latestVersion, err := version.GetLatestRunnerVersion(); err != nil {
+		if latestVersion, err := version.GetLatestRunnerVersion(&envData.GitHubToken); err != nil {
 			errors = append(errors, err.Error())
 		} else {
 			envData.GitHubRunnerVersion = latestVersion.String()

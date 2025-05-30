@@ -10,8 +10,21 @@ import (
 
 const defaultMajorVersion = 2
 
-func GetLatestRunnerVersion() (*version.Version, error) {
-	resp, err := http.Get("https://api.github.com/repos/actions/runner/releases/latest")
+func GetLatestRunnerVersion(token *string) (*version.Version, error) {
+	req, err := http.NewRequest("GET", "https://api.github.com/repos/actions/runner/releases/latest", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add GitHub token if available
+	if *token != "" {
+		req.Header.Set("Authorization", "Bearer "+*token)
+	}
+
+	// Add User-Agent header to comply with GitHub API requirements
+	req.Header.Set("User-Agent", "orka-github-actions-integration")
+
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
