@@ -13,7 +13,6 @@ import (
 
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/macstadium/orka-github-actions-integration/pkg/api"
-	"github.com/macstadium/orka-github-actions-integration/pkg/constants"
 	"github.com/macstadium/orka-github-actions-integration/pkg/env"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 	retryablehttp "github.com/macstadium/orka-github-actions-integration/pkg/http"
@@ -33,7 +32,7 @@ func FetchAccessToken(ctx context.Context, envData *env.Data) (*types.AccessToke
 		return nil, err
 	}
 
-	path := fmt.Sprintf("%s/app/installations/%v/access_tokens", constants.BaseGitHubAPIPath, envData.GitHubAppInstallationID)
+	path := fmt.Sprintf("%s/app/installations/%v/access_tokens", envData.GithubAPIUrl, envData.GitHubAppInstallationID)
 
 	return api.RequestJSON[any, types.AccessToken](ctx, httpClient.Client, http.MethodPost, path, nil)
 }
