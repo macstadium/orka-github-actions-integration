@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 	retryablehttp "github.com/macstadium/orka-github-actions-integration/pkg/http"
@@ -28,12 +29,12 @@ func (client *ActionsClient) GetAcquirableJobs(ctx context.Context, runnerScaleS
 
 func (client *ActionsClient) AcquireJobs(ctx context.Context, runnerScaleSetId int, messageQueueAccessToken string, requestIds []int64) ([]int64, error) {
 	var path string
-	if strings.Contains(client.actionsServiceUrl, "github.com") {
+	if strings.Contains(client.actionsServiceUrl, "https://github.com") {
 		// GitHub.com format
 		path = fmt.Sprintf("%s%s/%d/acquirejobs?api-version=6.0-preview", client.actionsServiceUrl, scaleSetEndpoint, runnerScaleSetId)
 	} else {
 		// GitHub Enterprise format
-		path = fmt.Sprintf("%s/%s/%s/acquirejobs?api-version=6.0-preview", client.actionsServiceUrl, scaleSetEndpoint, fmt.Sprint(runnerScaleSetId))
+		path = fmt.Sprintf("%s/%s/%d/acquirejobs?api-version=6.0-preview", client.actionsServiceUrl, scaleSetEndpoint, runnerScaleSetId)
 	}
 
 	body, err := json.Marshal(requestIds)
