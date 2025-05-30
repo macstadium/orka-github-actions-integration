@@ -27,6 +27,7 @@ type Data struct {
 	GitHubURL               string
 	GithubAPIUrl            string
 	GitHubRunnerVersion     string
+	GitHubToken             string // Token for authenticating with public GitHub API
 
 	OrkaURL   string
 	OrkaToken string
@@ -55,6 +56,7 @@ func ParseEnv() *Data {
 		GitHubURL:           os.Getenv(GitHubURLEnvName),
 		GithubAPIUrl:        os.Getenv(GitHubAPIURLEnvName),
 		GitHubRunnerVersion: os.Getenv(GitHubRunnerVersionEnvName),
+		GitHubToken:         os.Getenv(GitHubTokenEnvName),
 
 		OrkaURL:   os.Getenv(OrkaURLEnvName),
 		OrkaToken: os.Getenv(OrkaTokenEnvName),
