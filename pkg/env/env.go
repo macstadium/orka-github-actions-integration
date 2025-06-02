@@ -76,11 +76,6 @@ func ParseEnv() *Data {
 
 	errors := []string{}
 
-	if envData.GitHubURL == "" {
-		errors = append(errors, fmt.Sprintf("Github URL is required. Please provide either a Github URL with organization using %s env variable", GitHubURLEnvName))
-
-	}
-
 	if envData.GithubAPIUrl == "" {
 		envData.GithubAPIUrl = constants.BaseGitHubAPIPath
 	}
