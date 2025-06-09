@@ -25,9 +25,6 @@ Before using the Orka GitHub Runner, ensure that the following prerequisites are
 
 ### GitHub Enterprise Server 
 
-> [!NOTE] 
-> GitHub Enterprise Server was not available to the development team for testing at the time this project was initially built, nor is it expected to be made available to our team.
-
 The Orka GitHub Runner now supports GitHub Enterprise Server (GHES) environments. To use the runner with GHES, you'll need to provide the following additional environment variables:
 
 * `GITHUB_API_URL`: The URL of your GitHub Enterprise Server API endpoint (e.g., `https://github.enterprise.com/api/v3`)
@@ -40,9 +37,9 @@ When using GHES, make sure to:
 
 The runner will automatically detect if you're using GHES based on the provided URLs and adjust its behavior accordingly.
 
-Currently, we do not have the logic implemented to communicate with GitHub Enterprise hosted servers. While Github Enterprise Server isn't supported today, we welcome community contributions to this effort. If you would like to help us test the GitHub Enterprise Server integration with Orka, please [open a pull request](https://github.com/macstadium/orka-github-actions-integration/pulls) detailing your suggested code changes, tests, suggested documentation updates, and applicable next steps in the development process. We will then get you connected to a member of our field team to move the PR and testing process forward. 
+> [!NOTE]
+> GitHub Enterprise Server was not available to the development team for testing at the time this project was initially built, nor is it expected to be made available to our team. We welcome community contributions to this effort. If you would like to help us test the GitHub Enterprise Server integration with Orka, please [open a pull request](https://github.com/macstadium/orka-github-actions-integration/pulls) detailing your suggested code changes, tests, suggested documentation updates, and applicable next steps in the development process. We will then get you connected to a member of our field team to move the PR and testing process forward. 
 
-**Please note there is a current open issue for this use case. If you would like to collaborate with the broader Orka community to test the Orka GitHub Runner on GitHub Enterprise Server, consider [replying in this thread](https://github.com/macstadium/orka-github-actions-integration/issues/9) before opening a new one!**
 
 ## Setting up the Orka GitHub runner
 
