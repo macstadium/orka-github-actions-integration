@@ -16,8 +16,7 @@ func GetLatestRunnerVersion(token *string) (*version.Version, error) {
 		return nil, err
 	}
 
-	// Add GitHub token if available
-	if *token != "" {
+	if token != nil && *token != "" {
 		req.Header.Set("Authorization", "Bearer "+*token)
 	}
 
