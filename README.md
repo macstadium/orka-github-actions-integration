@@ -21,9 +21,15 @@ Before using the Orka GitHub Runner, ensure that the following prerequisites are
 
 * GitHub App: Having a GitHub App is a prerequisite for using the Orka GitHub Runner. You can find instructions on creating a GitHub App in the [Creating a GitHub app](docs/github-app-setup-steps.md) file.
 * Connectivity to Orka 3.0+ cluster: Ensure that the machine where the Orka Github Runner is started has connectivity to the Orka cluster. Additionally, ensure that the SSH ports are open to enable the runner to establish SSH connections with Orka VMs.
-* The Orka GitHub runner supports GitHub.com hosted environments.
+* The Orka GitHub runner has been tested with GitHub.com hosted environments. 
 
-> **NOTE**: Currently, GitHub Enterprise Server is not supported.
+### GitHub Enterprise Server 
+
+GitHub Enterprise Server was not available to the development team for testing at the time this project was initially built, nor is it expected to be made available to our team. 
+
+Currently, we do not have the logic implemented to communicate with GitHub Enterprise hosted servers. While Github Enterprise Server isn't supported today, we welcome community contributions to this effort. If you would like to help us test the GitHub Enterprise Server integration with Orka, please [open a pull request](https://github.com/macstadium/orka-github-actions-integration/pulls) detailing your suggested code changes, tests, suggested documentation updates, and applicable next steps in the development process. We will then get you connected to a member of our field team to move the PR and testing process forward. 
+
+**Please note there is a current open issue for this use case. If you would like to collaborate with the broader Orka community to test the Orka GitHub Runner on GitHub Enterprise Server, consider [replying in this thread](https://github.com/macstadium/orka-github-actions-integration/issues/9) before opening a new one!**
 
 ## Setting up the Orka GitHub runner
 
