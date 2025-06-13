@@ -1,0 +1,78 @@
+name: Daily Build Image Repository Update
+# Daily Build Image Repository Update
+# This workflow runs on weekdays (Mon–Fri) at 02:45 UTC.
+# It updates any repository code or dependencies baked into the Orka image.
+# After updating, it commits the VM image in-place.
+# To save as a new image:
+#   orka3 vm save <vm_name> <new_image_name>
+# Optionally, push to an OCI repository with the 'latest' tag for remote caching.
+#
+# Requirements:
+# - VM must have 'orka3' CLI and 'jq' installed
+# - Orka CLI must be configured (orka3 config set --api-url <address>)
+# - An Orka service account must be created:
+#     orka3 serviceaccount create <name>
+#     orka3 serviceaccount token <name>
+# - Store the token as a GitHub secret: ORKA_TOKEN
+
+on:
+  schedule:
+    - cron: '45 2 * * 1,2,3,4,5' # Minute, Hour, day of month, month, day of week
+                                 # 02:45 UTC M,Tu,W,Th,F
+    
+
+  workflow_dispatch:
+  repository_dispatch:
+
+env:
+  IMAGE_NAME: sonomagha
+  SERVER_ADDRESS: ghcr.io/hbarkdull
+  
+
+jobs:
+  build:
+    runs-on: gharunner
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Get VM Info
+        run: |
+          vm_name=$(curl http://169.254.169.254/metadata/orka_vm_name | /opt/homebrew/bin/jq -r '.value')
+          echo "VM_NAME=$vm_name" >> $GITHUB_ENV
+    
+      - name: Cache Code
+        run: echo "insert cache logic here" 
+  
+      - name: Set Orka Token
+        env:
+          ORKA_TOKEN: ${{ secrets.ORKA_TOKEN }}
+        run: /usr/local/bin/orka3 user set-token "$ORKA_TOKEN"
+      
+      - name: Commit Image
+        env:
+          vm_name: ${{ env.VM_NAME }}
+        run: /usr/local/bin/orka3 vm commit $vm_name
+
+      - name: Check Status
+        run: |
+          while true; do
+            STATUS=$(/usr/local/bin/orka3 image list $IMAGE_NAME | grep -w $IMAGE_NAME | awk '{print $NF}')
+            echo "Current Status: $STATUS"
+            if [ "$STATUS" == "Ready" ]; then
+              echo "Image is Ready."
+              break
+            fi
+            echo "Image not ready yet. Retrying in 30 seconds..."
+            sleep 30
+          done
+
+      #- name: Upload to OCI
+      #  env:
+      #    vm_name: ${{ env.VM_NAME }}
+      #  run: /usr/local/bin/orka3 vm push $vm_name $SERVER_ADDRESS/$IMAGE_NAME:latest
+
+      - name: Cache Image
+        run: /usr/local/bin/orka3 imagecache add $IMAGE_NAME --all
+        # Or if caching from OCI repository
+        # run: /usr/local/bin/orka3 imagecache add $SERVER_ADDRESS/$IMAGE_NAME:latest --all
+      
