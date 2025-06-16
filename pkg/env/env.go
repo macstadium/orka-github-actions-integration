@@ -3,6 +3,7 @@ package env
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -80,8 +81,16 @@ func ParseEnv() *Data {
 		if strings.Contains(envData.GitHubURL, "https://github.com") {
 			envData.GitHubAPIUrl = constants.BaseGitHubAPIPath
 		} else {
-			// This is Github Enterprise sever and API is <HOSTNAME>/api/v3
-			envData.GitHubAPIUrl = envData.GitHubURL + "/api/v3"
+			// This is Github Enterprise server and API is <HOSTNAME>/api/v3
+			// Parse the URL to get the hostname
+			parsedURL, err := url.Parse(envData.GitHubURL)
+			if err != nil {
+				errors = append(errors, fmt.Sprintf("invalid GitHub URL format: %s", err))
+			} else {
+				// Reconstruct the base URL with just the scheme and host
+				baseURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
+				envData.GitHubAPIUrl = baseURL + "/api/v3"
+			}
 		}
 	}
 
@@ -134,6 +143,22 @@ func ParseEnv() *Data {
 		errors = append(errors, err.Error())
 	} else {
 		envData.Runners = runners
+	}
+
+	if !regexp.MustCompile(`^https?://.+`).MatchString(envData.OrkaURL) {
+		errors = append(errors, fmt.Sprintf("%s env is required and must be set to the Orka API URL of the Orka cluster, for example, `http://10.221.188.20`", OrkaURLEnvName))
+	}
+
+	if envData.OrkaToken == "" {
+		errors = append(errors, fmt.Sprintf("%s env is required and must be set to a valid JWT token from the Orka cluster", OrkaTokenEnvName))
+	}
+
+	if envData.OrkaVMConfig == "" {
+		errors = append(errors, fmt.Sprintf("%s env is required and must be set to a valid and existing VM config in the Orka cluster", OrkaVMConfigEnvName))
+	}
+
+	if envData.OrkaVMMetadata != "" && !validateMetadata(envData.OrkaVMMetadata) {
+		errors = append(errors, fmt.Sprintf("%s must be formatted as key=value comma separated string", OrkaVMMetadataEnvName))
 	}
 
 	if errs := validateEnv(envData); len(errs) > 0 {

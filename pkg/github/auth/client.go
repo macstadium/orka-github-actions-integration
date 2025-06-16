@@ -21,7 +21,7 @@ func GetAuthorizationInfo(ctx context.Context, accessToken *types.AccessToken, g
 		return nil, err
 	}
 
-	path := fmt.Sprintf("%s/actions/runner-registration", githubApiUrl)
+	path := fmt.Sprintf("%s/actions/runner-registration", *githubApiUrl)
 
 	body := &types.RegistrationPayload{
 		Url:         config.URL,
