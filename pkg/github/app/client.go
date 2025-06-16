@@ -32,7 +32,7 @@ func FetchAccessToken(ctx context.Context, envData *env.Data) (*types.AccessToke
 		return nil, err
 	}
 
-	path := fmt.Sprintf("%s/app/installations/%v/access_tokens", envData.GithubAPIUrl, envData.GitHubAppInstallationID)
+	path := fmt.Sprintf("%s/app/installations/%v/access_tokens", envData.GitHubAPIUrl, envData.GitHubAppInstallationID)
 
 	return api.RequestJSON[any, types.AccessToken](ctx, httpClient.Client, http.MethodPost, path, nil)
 }

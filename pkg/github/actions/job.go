@@ -29,13 +29,7 @@ func (client *ActionsClient) GetAcquirableJobs(ctx context.Context, runnerScaleS
 
 func (client *ActionsClient) AcquireJobs(ctx context.Context, runnerScaleSetId int, messageQueueAccessToken string, requestIds []int64) ([]int64, error) {
 	var pathPrefix string
-	if strings.Contains(client.actionsServiceUrl, "https://github.com") {
-		// GitHub.com format
-		pathPrefix = fmt.Sprintf("%s%s/%d", client.actionsServiceUrl, scaleSetEndpoint, runnerScaleSetId)
-	} else {
-		// GitHub Enterprise format
-		pathPrefix = fmt.Sprintf("%s/%s/%d", client.actionsServiceUrl, scaleSetEndpoint, runnerScaleSetId)
-	}
+	pathPrefix = fmt.Sprintf("%s/%s/%d", strings.TrimSuffix(client.actionsServiceUrl, "/"), scaleSetEndpoint, runnerScaleSetId)
 	path := pathPrefix + "/acquirejobs?api-version=6.0-preview"
 
 	body, err := json.Marshal(requestIds)

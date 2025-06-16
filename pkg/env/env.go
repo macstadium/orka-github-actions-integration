@@ -25,7 +25,7 @@ type Data struct {
 	GitHubAppInstallationID int64
 	GitHubAppPrivateKey     string
 	GitHubURL               string
-	GithubAPIUrl            string
+	GitHubAPIUrl            string
 	GitHubRunnerVersion     string
 	GitHubToken             string // Token for authenticating with public GitHub API
 
@@ -54,7 +54,7 @@ func ParseEnv() *Data {
 	envData := &Data{
 		GitHubAppPrivateKey: os.Getenv(GitHubAppPrivateKeyEnvName),
 		GitHubURL:           os.Getenv(GitHubURLEnvName),
-		GithubAPIUrl:        os.Getenv(GitHubAPIURLEnvName),
+		GitHubAPIUrl:        os.Getenv(GitHubAPIURLEnvName),
 		GitHubRunnerVersion: os.Getenv(GitHubRunnerVersionEnvName),
 		GitHubToken:         os.Getenv(GitHubTokenEnvName),
 
@@ -76,8 +76,13 @@ func ParseEnv() *Data {
 
 	errors := []string{}
 
-	if envData.GithubAPIUrl == "" {
-		envData.GithubAPIUrl = constants.BaseGitHubAPIPath
+	if envData.GitHubAPIUrl == "" {
+		if strings.Contains(envData.GitHubURL, "https://github.com") {
+			envData.GitHubAPIUrl = constants.BaseGitHubAPIPath
+		} else {
+			// This is Github Enterprise sever and API is <HOSTNAME>/api/v3
+			envData.GitHubAPIUrl = envData.GitHubURL + "/api/v3"
+		}
 	}
 
 	if appID, err := strconv.ParseInt(os.Getenv(GitHubAppIDEnvName), 10, 64); err != nil {
