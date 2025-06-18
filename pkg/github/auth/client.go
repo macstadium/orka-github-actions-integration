@@ -15,13 +15,13 @@ import (
 	retryablehttp "github.com/macstadium/orka-github-actions-integration/pkg/http"
 )
 
-func GetAuthorizationInfo(ctx context.Context, accessToken *types.AccessToken, githubApiUrl *string, config *github.GitHubConfig) (*types.AuthorizationInfo, error) {
+func GetAuthorizationInfo(ctx context.Context, accessToken *types.AccessToken, githubApiUrl string, config *github.GitHubConfig) (*types.AuthorizationInfo, error) {
 	registrationToken, err := getRegistrationToken(ctx, githubApiUrl, config, accessToken.Token)
 	if err != nil {
 		return nil, err
 	}
 
-	path := fmt.Sprintf("%s/actions/runner-registration", *githubApiUrl)
+	path := fmt.Sprintf("%s/actions/runner-registration", githubApiUrl)
 
 	body := &types.RegistrationPayload{
 		Url:         config.URL,
@@ -39,14 +39,14 @@ func GetAuthorizationInfo(ctx context.Context, accessToken *types.AccessToken, g
 	return api.RequestJSON[types.RegistrationPayload, types.AuthorizationInfo](ctx, httpClient.Client, http.MethodPost, path, body)
 }
 
-func createRegistrationTokenPath(githubApiUrl *string, config *github.GitHubConfig) (string, error) {
+func createRegistrationTokenPath(githubApiUrl string, config *github.GitHubConfig) (string, error) {
 	switch config.Scope {
 	case github.GitHubScopeOrganization:
-		path := fmt.Sprintf("%s/orgs/%s/actions/runners/registration-token", *githubApiUrl, config.Organization)
+		path := fmt.Sprintf("%s/orgs/%s/actions/runners/registration-token", githubApiUrl, config.Organization)
 		return path, nil
 
 	case github.GitHubScopeRepository:
-		path := fmt.Sprintf("%s/repos/%s/%s/actions/runners/registration-token", *githubApiUrl, config.Organization, config.Repository)
+		path := fmt.Sprintf("%s/repos/%s/%s/actions/runners/registration-token", githubApiUrl, config.Organization, config.Repository)
 		return path, nil
 
 	default:
@@ -54,7 +54,7 @@ func createRegistrationTokenPath(githubApiUrl *string, config *github.GitHubConf
 	}
 }
 
-func getRegistrationToken(ctx context.Context, githubApiUrl *string, config *github.GitHubConfig, accessToken string) (*types.RegistrationToken, error) {
+func getRegistrationToken(ctx context.Context, githubApiUrl string, config *github.GitHubConfig, accessToken string) (*types.RegistrationToken, error) {
 	path, err := createRegistrationTokenPath(githubApiUrl, config)
 	if err != nil {
 		return nil, err

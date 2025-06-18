@@ -28,8 +28,7 @@ func (client *ActionsClient) GetAcquirableJobs(ctx context.Context, runnerScaleS
 }
 
 func (client *ActionsClient) AcquireJobs(ctx context.Context, runnerScaleSetId int, messageQueueAccessToken string, requestIds []int64) ([]int64, error) {
-	var pathPrefix string
-	pathPrefix = fmt.Sprintf("%s/%s/%d", strings.TrimSuffix(client.actionsServiceUrl, "/"), scaleSetEndpoint, runnerScaleSetId)
+	pathPrefix := fmt.Sprintf("%s/%s/%d", strings.TrimSuffix(client.actionsServiceUrl, "/"), scaleSetEndpoint, runnerScaleSetId)
 	path := pathPrefix + "/acquirejobs?api-version=6.0-preview"
 
 	body, err := json.Marshal(requestIds)
