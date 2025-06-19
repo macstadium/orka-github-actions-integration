@@ -3,6 +3,7 @@ package env
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 	"log"
 
 	"github.com/joho/godotenv"
+	"github.com/macstadium/orka-github-actions-integration/pkg/constants"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
 	"github.com/macstadium/orka-github-actions-integration/pkg/version"
 )
@@ -24,7 +26,9 @@ type Data struct {
 	GitHubAppInstallationID int64
 	GitHubAppPrivateKey     string
 	GitHubURL               string
+	GitHubAPIUrl            string
 	GitHubRunnerVersion     string
+	GitHubToken             string // Token for authenticating with public GitHub API
 
 	OrkaURL   string
 	OrkaToken string
@@ -51,7 +55,9 @@ func ParseEnv() *Data {
 	envData := &Data{
 		GitHubAppPrivateKey: os.Getenv(GitHubAppPrivateKeyEnvName),
 		GitHubURL:           os.Getenv(GitHubURLEnvName),
+		GitHubAPIUrl:        os.Getenv(GitHubAPIURLEnvName),
 		GitHubRunnerVersion: os.Getenv(GitHubRunnerVersionEnvName),
+		GitHubToken:         os.Getenv(GitHubTokenEnvName),
 
 		OrkaURL:   os.Getenv(OrkaURLEnvName),
 		OrkaToken: os.Getenv(OrkaTokenEnvName),
@@ -70,6 +76,23 @@ func ParseEnv() *Data {
 	envData.OrkaURL = strings.TrimSuffix(envData.OrkaURL, "/")
 
 	errors := []string{}
+
+	if envData.GitHubAPIUrl == "" {
+		if strings.Contains(envData.GitHubURL, "https://github.com") {
+			envData.GitHubAPIUrl = constants.BaseGitHubAPIPath
+		} else {
+			// This is Github Enterprise server and API is <HOSTNAME>/api/v3
+			// Parse the URL to get the hostname
+			parsedURL, err := url.Parse(envData.GitHubURL)
+			if err != nil {
+				errors = append(errors, fmt.Sprintf("invalid GitHub URL format: %s", err))
+			} else {
+				// Reconstruct the base URL with just the scheme and host
+				baseURL := fmt.Sprintf("%s://%s", parsedURL.Scheme, parsedURL.Host)
+				envData.GitHubAPIUrl = baseURL + "/api/v3"
+			}
+		}
+	}
 
 	if appID, err := strconv.ParseInt(os.Getenv(GitHubAppIDEnvName), 10, 64); err != nil {
 		errors = append(errors, fmt.Sprintf("%s is not set to a valid number: %s", GitHubAppIDEnvName, err))
@@ -109,7 +132,7 @@ func ParseEnv() *Data {
 	}
 
 	if envData.GitHubRunnerVersion == "" {
-		if latestVersion, err := version.GetLatestRunnerVersion(); err != nil {
+		if latestVersion, err := version.GetLatestRunnerVersion(&envData.GitHubToken); err != nil {
 			errors = append(errors, err.Error())
 		} else {
 			envData.GitHubRunnerVersion = latestVersion.String()
@@ -120,6 +143,22 @@ func ParseEnv() *Data {
 		errors = append(errors, err.Error())
 	} else {
 		envData.Runners = runners
+	}
+
+	if !regexp.MustCompile(`^https?://.+`).MatchString(envData.OrkaURL) {
+		errors = append(errors, fmt.Sprintf("%s env is required and must be set to the Orka API URL of the Orka cluster, for example, `http://10.221.188.20`", OrkaURLEnvName))
+	}
+
+	if envData.OrkaToken == "" {
+		errors = append(errors, fmt.Sprintf("%s env is required and must be set to a valid JWT token from the Orka cluster", OrkaTokenEnvName))
+	}
+
+	if envData.OrkaVMConfig == "" {
+		errors = append(errors, fmt.Sprintf("%s env is required and must be set to a valid and existing VM config in the Orka cluster", OrkaVMConfigEnvName))
+	}
+
+	if envData.OrkaVMMetadata != "" && !validateMetadata(envData.OrkaVMMetadata) {
+		errors = append(errors, fmt.Sprintf("%s must be formatted as key=value comma separated string", OrkaVMMetadataEnvName))
 	}
 
 	if errs := validateEnv(envData); len(errs) > 0 {
@@ -165,7 +204,7 @@ func getRunnersFromEnv() ([]Runner, error) {
 func validateEnv(envData *Data) []string {
 	errors := []string{}
 
-	if !regexp.MustCompile(`^https?://github.com/.+`).MatchString(envData.GitHubURL) {
+	if !regexp.MustCompile(`^https?://.+`).MatchString(envData.GitHubURL) {
 		errors = append(errors, fmt.Sprintf("%s env is required and must be set to the GitHub repository or organization URL, for example, 'https://github.com/your-username/your-repository'", GitHubURLEnvName))
 	}
 
