@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
@@ -30,6 +31,7 @@ func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerI
 		logger:             logging.Logger.Named(fmt.Sprintf("runner-message-processor-%d", runnerScaleSet.Id)),
 		runnerScaleSetName: runnerScaleSet.Name,
 		canceledJobs:       map[string]bool{},
+		canceledJobsMutex:  sync.RWMutex{},
 	}
 }
 
@@ -117,7 +119,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 						jobId = defaultJobId
 					}
 
-					for attempt := 1; !p.canceledJobs[jobId]; attempt++ {
+					for attempt := 1; !p.isCanceled(jobId); attempt++ {
 						err := p.runnerProvisioner.ProvisionRunner(p.ctx)
 						if err == nil {
 							break
@@ -128,7 +130,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 						time.Sleep(15 * time.Second)
 					}
 
-					delete(p.canceledJobs, jobId)
+					p.removeCanceledJob(jobId)
 				}()
 			}
 		case "JobStarted":
@@ -146,7 +148,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 			p.logger.Infof("Job completed message received for JobId: %s, RunnerRequestId: %d, RunnerId: %d, RunnerName: %s, with Result: %s", jobCompleted.JobId, jobCompleted.RunnerRequestId, jobCompleted.RunnerId, jobCompleted.RunnerName, jobCompleted.Result)
 
 			if jobCompleted.JobId != "" && (jobCompleted.Result == cancelledStatus || jobCompleted.Result == ignoredStatus || jobCompleted.Result == abandonedStatus) {
-				p.canceledJobs[jobCompleted.JobId] = true
+				p.setCanceledJob(jobCompleted.JobId)
 			}
 		default:
 			p.logger.Infof("unknown job message type %s", messageType.MessageType)
@@ -159,4 +161,22 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 	}
 
 	return nil
+}
+
+func (p *RunnerMessageProcessor) isCanceled(jobId string) bool {
+	p.canceledJobsMutex.RLock()
+	defer p.canceledJobsMutex.RUnlock()
+	return p.canceledJobs[jobId]
+}
+
+func (p *RunnerMessageProcessor) setCanceledJob(jobId string) {
+	p.canceledJobsMutex.Lock()
+	defer p.canceledJobsMutex.Unlock()
+	p.canceledJobs[jobId] = true
+}
+
+func (p *RunnerMessageProcessor) removeCanceledJob(jobId string) {
+	p.canceledJobsMutex.Lock()
+	defer p.canceledJobsMutex.Unlock()
+	delete(p.canceledJobs, jobId)
 }

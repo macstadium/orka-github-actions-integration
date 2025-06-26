@@ -6,6 +6,7 @@ package runners
 
 import (
 	"context"
+	"sync"
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/actions"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/messagequeue"
@@ -40,4 +41,5 @@ type RunnerMessageProcessor struct {
 	runnerProvisioner  RunnerProvisionerInterface
 	runnerScaleSetName string
 	canceledJobs       map[string]bool
+	canceledJobsMutex  sync.RWMutex
 }
