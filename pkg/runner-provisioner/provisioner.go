@@ -96,7 +96,14 @@ func (p *RunnerProvisioner) getRealVMIP(vmIP string) (string, error) {
 
 func (p *RunnerProvisioner) deleteVM(ctx context.Context, runnerName string) {
 	p.logger.Infof("deleting Orka VM with name %s", runnerName)
-	err := backoff.Retry(func() error { return p.orkaClient.DeleteVM(ctx, runnerName) }, backoff.NewExponentialBackOff())
+	operation := func() error {
+		err := p.orkaClient.DeleteVM(ctx, runnerName)
+		if err != nil && strings.Contains(err.Error(), "vm does not exist") {
+			return nil
+		}
+		return err
+	}
+	err := backoff.Retry(operation, backoff.NewExponentialBackOff())
 	if err != nil {
 		p.logger.Infof("error while deleting Orka VM %s. More information: %s", runnerName, err.Error())
 	} else {
