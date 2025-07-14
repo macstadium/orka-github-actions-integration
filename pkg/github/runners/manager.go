@@ -140,6 +140,9 @@ func (m *RunnerManager) ProcessMessages(ctx context.Context, handler func(msg *t
 	for {
 		message, err := m.messageQueueManager.ReceiveNextMessage(ctx, m.lastMessageId)
 		if err != nil {
+			if ctx.Err() == context.Canceled {
+				return err
+			}
 			m.logger.Errorf("unable to get the next message from the message queue. %w", err)
 		}
 
