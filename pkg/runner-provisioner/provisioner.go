@@ -99,6 +99,7 @@ func (p *RunnerProvisioner) deleteVM(ctx context.Context, runnerName string) {
 	operation := func() error {
 		err := p.orkaClient.DeleteVM(ctx, runnerName)
 		if err != nil && strings.Contains(err.Error(), "not found") {
+			p.logger.Warnf("vm not found for %s", runnerName)
 			return nil
 		}
 		return err
