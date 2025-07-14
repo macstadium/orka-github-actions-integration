@@ -3,6 +3,7 @@ module github.com/macstadium/orka-github-actions-integration
 go 1.23.0
 
 require (
+	github.com/cenkalti/backoff/v4 v4.3.0
 	github.com/golang-jwt/jwt/v4 v4.5.0
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/go-retryablehttp v0.7.5

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	backoff "github.com/cenkalti/backoff/v4"
 	"github.com/macstadium/orka-github-actions-integration/pkg/env"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/actions"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
@@ -95,7 +96,15 @@ func (p *RunnerProvisioner) getRealVMIP(vmIP string) (string, error) {
 
 func (p *RunnerProvisioner) deleteVM(ctx context.Context, runnerName string) {
 	p.logger.Infof("deleting Orka VM with name %s", runnerName)
-	err := p.orkaClient.DeleteVM(ctx, runnerName)
+	operation := func() error {
+		err := p.orkaClient.DeleteVM(ctx, runnerName)
+		if err != nil && strings.Contains(err.Error(), "not found") {
+			p.logger.Warnf("vm not found for %s", runnerName)
+			return nil
+		}
+		return err
+	}
+	err := backoff.Retry(operation, backoff.NewExponentialBackOff())
 	if err != nil {
 		p.logger.Infof("error while deleting Orka VM %s. More information: %s", runnerName, err.Error())
 	} else {
