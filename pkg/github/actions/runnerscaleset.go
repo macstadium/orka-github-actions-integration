@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"net/http"
 
-	backoff "github.com/cenkalti/backoff/v4"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 )
 
@@ -39,11 +38,7 @@ func (client *ActionsClient) CreateRunnerScaleSet(ctx context.Context, runner *t
 func (client *ActionsClient) DeleteRunnerScaleSet(ctx context.Context, runnerScaleSetId int) error {
 	path := fmt.Sprintf("/%s/%d", scaleSetEndpoint, runnerScaleSetId)
 
-	operation := func() error {
-		_, err := RequestJSON[any, any](ctx, client, http.MethodDelete, path, nil)
+	_, err := RequestJSON[any, any](ctx, client, http.MethodDelete, path, nil)
 
-		return err
-	}
-
-	return backoff.Retry(operation, backoff.NewExponentialBackOff())
+	return err
 }
