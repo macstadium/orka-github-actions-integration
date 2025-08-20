@@ -37,13 +37,9 @@ When using GHES, make sure to:
 
 The runner will automatically detect if you're using GHES based on the provided URLs and adjust its behavior accordingly.
 
-> [!NOTE]
-> GitHub Enterprise Server was not available to the development team for testing at the time this project was initially built, nor is it expected to be made available to our team. We welcome community contributions to this effort. If you would like to help us test the GitHub Enterprise Server integration with Orka, please [open a pull request](https://github.com/macstadium/orka-github-actions-integration/pulls) detailing your suggested code changes, tests, suggested documentation updates, and applicable next steps in the development process. We will then get you connected to a member of our field team to move the PR and testing process forward. 
-
-
 ## Setting up the Orka GitHub runner
 
-You can get the Orka GitHub runner by downloading it from [this link](https://github.com/macstadium/orka-github-actions-integration/pkgs/container/orka-github-runner). You will be able to execute the runner (via `docker run`) from any machine that has connectivity to the Orka cluster. If running within MacStadium, you can request 2 vCPU of Private Cloud x86 compute to run the container.
+You can get the Orka GitHub runner by downloading it from [this link](https://github.com/macstadium/orka-github-actions-integration/pkgs/container/orka-github-runner). You will be able to execute the runner (via `docker run`) from any machine that has connectivity to the Orka cluster. If running within MacStadium, you can request 2 vCPU of Private Cloud x86 compute with 15GB of storage to run the container, with the corresponding compute billed as a part of your Virtual Private Cloud (VPC) services.
 
 ### Environment variables
 
