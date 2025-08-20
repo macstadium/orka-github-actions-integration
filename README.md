@@ -39,7 +39,7 @@ The runner will automatically detect if you're using GHES based on the provided 
 
 ## Setting up the Orka GitHub runner
 
-You can get the Orka GitHub runner by downloading it from [this link](https://github.com/macstadium/orka-github-actions-integration/pkgs/container/orka-github-runner). You will be able to execute the runner (via `docker run`) from any machine that has connectivity to the Orka cluster. If running within MacStadium, you can request 2 vCPU of Private Cloud x86 compute to run the container, with the corresponding compute billed as a part of your Virtual Private Cloud (VPC) services.
+You can get the Orka GitHub runner by downloading it from [this link](https://github.com/macstadium/orka-github-actions-integration/pkgs/container/orka-github-runner). You will be able to execute the runner (via `docker run`) from any machine that has connectivity to the Orka cluster. If running within MacStadium, you can request 2 vCPU of Private Cloud x86 compute with 15GB of storage to run the container, with the corresponding compute billed as a part of your Virtual Private Cloud (VPC) services.
 
 ### Environment variables
 
