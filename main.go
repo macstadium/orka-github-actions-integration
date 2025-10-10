@@ -47,7 +47,7 @@ func main() {
 		panic(err)
 	}
 
-	runnerScaleSet, err := actionsClient.GetRunnerScaleSet(ctx, constants.DefaultRunnerGroupID, runnerName)
+	runnerScaleSet, err := actionsClient.GetRunnerScaleSet(ctx, envData.GitHubRunnerGroupID, runnerName)
 	if err != nil {
 		panic(err)
 	}

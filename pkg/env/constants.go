@@ -8,6 +8,7 @@ const (
 	GitHubURLEnvName               = "GITHUB_URL"
 	GitHubAPIURLEnvName            = "GITHUB_API_URL"
 	GitHubRunnerVersionEnvName     = "GITHUB_RUNNER_VERSION"
+	GitHubRunnerGroupIDName        = "GITHUB_RUNNER_GROUP_ID"
 	GitHubTokenEnvName             = "GITHUB_TOKEN" // Token for public GitHub API authentication
 
 	OrkaURLEnvName   = "ORKA_URL"

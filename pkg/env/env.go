@@ -28,6 +28,7 @@ type Data struct {
 	GitHubURL               string
 	GitHubAPIUrl            string
 	GitHubRunnerVersion     string
+	GitHubRunnerGroupID     int
 	GitHubToken             string // Token for authenticating with public GitHub API
 
 	OrkaURL   string
@@ -104,6 +105,16 @@ func ParseEnv() *Data {
 		errors = append(errors, fmt.Sprintf("%s is not set to a valid number: %s", GitHubAppInstallationIDEnvName, err))
 	} else {
 		envData.GitHubAppInstallationID = installationID
+	}
+
+	if runnerGroupIDString := os.Getenv(GitHubRunnerGroupIDName); runnerGroupIDString == "" {
+		envData.GitHubRunnerGroupID = constants.DefaultRunnerGroupID
+	} else {
+		if runnerGroupID, err := strconv.ParseInt(runnerGroupIDString, 10, 0); err != nil {
+			errors = append(errors, fmt.Sprintf("%s is not set to a valid number: %s", GitHubRunnerGroupIDName, err))
+		} else {
+			envData.GitHubRunnerGroupID = int(runnerGroupID)
+		}
 	}
 
 	if envData.GitHubAppPrivateKey == "" {
