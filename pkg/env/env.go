@@ -19,6 +19,7 @@ import (
 
 type Runner struct {
 	Name string
+	Id   int
 }
 
 type Data struct {
