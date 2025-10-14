@@ -38,7 +38,7 @@ func main() {
 
 	runnerName := envData.Runners[0].Name
 	groupId := constants.DefaultRunnerGroupID
-	if envData.Runners[0].Id == 0 {
+	if envData.Runners[0].Id != 0 {
 		groupId = envData.Runners[0].Id
 	}
 
