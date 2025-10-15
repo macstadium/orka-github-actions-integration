@@ -196,7 +196,7 @@ func getRunnersFromEnv() ([]Runner, error) {
 
 	var runners []Runner
 	if err := json.Unmarshal([]byte(values), &runners); err != nil {
-		return nil, fmt.Errorf(`unable to parse the %s environment variable as a JSON array of runners. Make sure the variable is correctly set with a valid JSON array, for example, '[{"name":"my-test-runner"}]'`, RunnersEnvName)
+		return nil, fmt.Errorf(`unable to parse the %s environment variable as a JSON array of runners. Make sure the variable is correctly set with a valid JSON array, for example, '[{"name":"my-test-runner", "id": 1}]'`, RunnersEnvName)
 	}
 
 	return runners, nil
