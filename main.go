@@ -37,6 +37,10 @@ func main() {
 	}
 
 	runnerName := envData.Runners[0].Name
+	groupId := constants.DefaultRunnerGroupID
+	if envData.Runners[0].Id != 0 {
+		groupId = envData.Runners[0].Id
+	}
 
 	if len(validation.IsValidLabelValue(runnerName)) > 0 || len(validation.IsDNS1035Label(runnerName)) > 0 {
 		panic(fmt.Sprintf("invalid runner name: %s. Runner name must consist of lower case alphanumeric characters or ' - ', start with an alphabetic character, end with an alphanumeric character, and may not be longer than 63 characters.", runnerName))
@@ -47,7 +51,7 @@ func main() {
 		panic(err)
 	}
 
-	runnerScaleSet, err := actionsClient.GetRunnerScaleSet(ctx, constants.DefaultRunnerGroupID, runnerName)
+	runnerScaleSet, err := actionsClient.GetRunnerScaleSet(ctx, groupId, runnerName)
 	if err != nil {
 		panic(err)
 	}
@@ -79,7 +83,7 @@ func main() {
 
 	runnerScaleSet, err = actionsClient.CreateRunnerScaleSet(ctx, &types.RunnerScaleSet{
 		Name:          runnerName,
-		RunnerGroupId: constants.DefaultRunnerGroupID,
+		RunnerGroupId: groupId,
 		Labels: []types.RunnerScaleSetLabel{
 			{
 				Name: runnerName,
