@@ -18,8 +18,9 @@ import (
 )
 
 type Runner struct {
-	Name string
-	Id   int
+	Name      string // name of the runner
+	GroupId   int    // Group ID
+	GroupName string // Group Name of the runner
 }
 
 type Data struct {

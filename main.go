@@ -37,9 +37,13 @@ func main() {
 	}
 
 	runnerName := envData.Runners[0].Name
-	groupId := constants.DefaultRunnerGroupID
-	if envData.Runners[0].Id != 0 {
-		groupId = envData.Runners[0].Id
+	runnerGroupName := envData.Runners[0].GroupName
+	if runnerGroupName == "" {
+		runnerGroupName = "Orka Runner Group"
+	}
+	runnerGroupId := constants.DefaultRunnerGroupID
+	if envData.Runners[0].GroupId != 0 {
+		runnerGroupId = envData.Runners[0].GroupId
 	}
 
 	if len(validation.IsValidLabelValue(runnerName)) > 0 || len(validation.IsDNS1035Label(runnerName)) > 0 {
@@ -51,7 +55,7 @@ func main() {
 		panic(err)
 	}
 
-	runnerScaleSet, err := actionsClient.GetRunnerScaleSet(ctx, groupId, runnerName)
+	runnerScaleSet, err := actionsClient.GetRunnerScaleSet(ctx, runnerGroupId, runnerName)
 	if err != nil {
 		panic(err)
 	}
@@ -82,8 +86,9 @@ func main() {
 	}()
 
 	runnerScaleSet, err = actionsClient.CreateRunnerScaleSet(ctx, &types.RunnerScaleSet{
-		Name:          runnerName,
-		RunnerGroupId: groupId,
+		Name:            runnerName,
+		RunnerGroupName: runnerGroupName,
+		RunnerGroupId:   runnerGroupId,
 		Labels: []types.RunnerScaleSetLabel{
 			{
 				Name: runnerName,
