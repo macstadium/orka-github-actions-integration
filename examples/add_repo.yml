@@ -1,0 +1,86 @@
+name: Add or Update Repository
+# Add or Update Repository Workflow
+# 
+# This workflow ensures that a Git repository is cached and kept up-to-date on the runner.
+# It runs:
+# - On a schedule (Weekdays at 02:45 UTC)
+# - On pushes to the 'main' branch
+# - On pull requests targeting 'main'
+# - When manually triggered or via external repository dispatch
+#
+# It uses Git alternates to create a working copy that shares objects with a cached clone.
+#
+# Image commit/caching steps are provided but currently commented out.
+
+on:
+  schedule:
+    - cron: '45 2 * * 1,2,3,4,5' # Minute, Hour, day of month, month, day of week
+                                 # 02:45 UTC M,Tu,W,Th,F
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  workflow_dispatch:
+  repository_dispatch:
+
+env:
+  IMAGE_NAME: orka-github-image # The Orka image to be used
+
+jobs:
+  build:
+    runs-on: gharunner # The Orka Runner to be used
+    steps:
+      - name: Cache Repository
+        uses: actions/cache@v4
+        with:
+          path: $GITHUB_WORKSPACE/repo
+          key: repo-cache-${{ github.ref_name }}
+          restore-keys: |
+            repo-cache-
+
+      - name: Ensure Cache Directory Exists
+        run: mkdir -p $GITHUB_WORKSPACE/repo
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          repository: hbarkdull/ghatest
+          path: repo  # This ensures it is under $GITHUB_WORKSPACE/repo
+          fetch-depth: 0  # Faster checkout
+          ref: main
+
+      - name: Create Working Copy with Alternates
+        run: |
+          rm -rf $GITHUB_WORKSPACE/workspace/your-repo
+          git clone --reference $GITHUB_WORKSPACE/repo file://$GITHUB_WORKSPACE/repo $GITHUB_WORKSPACE/workspace/your-repo
+          echo "$GITHUB_WORKSPACE/repo/objects" > $GITHUB_WORKSPACE/workspace/your-repo/.git/objects/info/alternates
+          cd $GITHUB_WORKSPACE/workspace/your-repo
+          git fetch --all
+          git checkout main
+
+      - name: Get VM Info
+        run: |
+          vm_name=$(curl http://169.254.169.254/metadata/orka_vm_name | /opt/homebrew/bin/jq -r '.value')
+          echo "VM_NAME=$vm_name" >> $GITHUB_ENV
+
+      #- name: Commit Image
+      #  env:
+      #    vm_name: ${{ env.VM_NAME }}
+      #  run: /usr/local/bin/orka3 vm commit $vm_name
+
+      #- name: Check Image Status
+      #  run: |
+      #    while true; do
+      #      STATUS=$(/usr/local/bin/orka3 image list $IMAGE_NAME | grep -w $IMAGE_NAME | awk '{print $NF}')
+      #      echo "Current Status: $STATUS"
+      #      if [ "$STATUS" == "Ready" ]; then
+      #        echo "Image is Ready."
+      #        break
+      #      fi
+      #      echo "Image not ready yet. Retrying in 30 seconds..."
+      #      sleep 30
+      #    done
+          
+      #- name: Cache Image
+      # Consumes Resources (1vCPU/500mb RAM)
+      #  run: /usr/local/bin/orka3 imagecache add $IMAGE_NAME --all
