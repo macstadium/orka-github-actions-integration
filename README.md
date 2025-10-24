@@ -21,9 +21,9 @@ Before using the Orka GitHub Runner, ensure that the following prerequisites are
 
 * GitHub App: Having a GitHub App is a prerequisite for using the Orka GitHub Runner. You can find instructions on creating a GitHub App in the [Creating a GitHub app](docs/github-app-setup-steps.md) file.
 * Connectivity to Orka 3.0+ cluster: Ensure that the machine where the Orka Github Runner is started has connectivity to the Orka cluster. Additionally, ensure that the SSH ports are open to enable the runner to establish SSH connections with Orka VMs.
-* The Orka GitHub runner has been tested with GitHub.com hosted environments. 
+* The Orka GitHub runner has been tested with GitHub.com hosted environments.
 
-### GitHub Enterprise Server 
+### GitHub Enterprise Server
 
 The Orka GitHub Runner now supports GitHub Enterprise Server (GHES) environments. To use the runner with GHES, you'll need to provide the following additional environment variables:
 
@@ -31,6 +31,7 @@ The Orka GitHub Runner now supports GitHub Enterprise Server (GHES) environments
 * `GITHUB_TOKEN`: A GitHub token with appropriate permissions to avoid rate limiting
 
 When using GHES, make sure to:
+
 1. Configure the `GITHUB_URL` to point to your enterprise instance (e.g., `https://github.enterprise.com`)
 2. Set the `GITHUB_API_URL` to your enterprise API endpoint
 3. Provide a valid `GITHUB_TOKEN` with appropriate permissions for pulling the runner from github.com
@@ -38,21 +39,73 @@ When using GHES, make sure to:
 The runner will automatically detect if you're using GHES based on the provided URLs and adjust its behavior accordingly.
 
 > [!NOTE]
-> GitHub Enterprise Server was not available to the development team for testing at the time this project was initially built, nor is it expected to be made available to our team. We welcome community contributions to this effort. If you would like to help us test the GitHub Enterprise Server integration with Orka, please [open a pull request](https://github.com/macstadium/orka-github-actions-integration/pulls) detailing your suggested code changes, tests, suggested documentation updates, and applicable next steps in the development process. We will then get you connected to a member of our field team to move the PR and testing process forward. 
-
+> GitHub Enterprise Server was not available to the development team for testing at the time this project was initially built, nor is it expected to be made available to our team. We welcome community contributions to this effort. If you would like to help us test the GitHub Enterprise Server integration with Orka, please [open a pull request](https://github.com/macstadium/orka-github-actions-integration/pulls) detailing your suggested code changes, tests, suggested documentation updates, and applicable next steps in the development process. We will then get you connected to a member of our field team to move the PR and testing process forward.
 
 ## Setting up the Orka GitHub runner
 
 You can get the Orka GitHub runner by downloading it from [this link](https://github.com/macstadium/orka-github-actions-integration/pkgs/container/orka-github-runner). You will be able to execute the runner (via `docker run`) from any machine that has connectivity to the Orka cluster. If running within MacStadium, you can request 2 vCPU of Private Cloud x86 compute to run the container.
 
+### Architecture Support
+
+The Orka GitHub Runner supports both Intel-based (AMD64) and Apple Silicon-based (ARM64) Orka clusters. When building from source or selecting a pre-built image, ensure the architecture matches your Orka infrastructure.
+
+#### Supported Architectures
+
+* **AMD64** (Intel-based Orka nodes) - Default
+* **ARM64** (Apple Silicon-based Orka nodes)
+
+#### Using Pre-built Images
+
+Pre-built images are available from the GitHub Container Registry for both architectures:
+
+```bash
+# Docker will automatically pull the appropriate architecture for your host machine
+docker pull ghcr.io/macstadium/orka-github-runner:<version>
+```
+
+To verify the architecture of a pulled image:
+
+```bash
+docker inspect ghcr.io/macstadium/orka-github-runner:<version> | grep Architecture
+```
+
+#### Building from Source
+
+If you need to build the Docker image yourself, specify the architecture using the `TARGETARCH` build argument:
+
+**For Intel-based Orka clusters (AMD64) - Default:**
+
+```bash
+docker build -t ghcr.io/macstadium/orka-github-runner:latest .
+```
+
+**For Apple Silicon-based Orka clusters (ARM64):**
+
+```bash
+docker build --build-arg TARGETARCH=arm64 \
+  -t ghcr.io/macstadium/orka-github-runner:arm64 .
+```
+
+#### Architecture Selection Guide
+
+| Orka Node Type | Architecture | Build Argument |
+|---------------|--------------|----------------|
+| Intel-based Mac | AMD64 | Default or `--build-arg TARGETARCH=amd64` |
+| Apple Silicon Mac (M1/M2/M3/M4) | ARM64 | `--build-arg TARGETARCH=arm64` |
+
+> **NOTE**: If you encounter an "exec format error" when running the container, the container architecture doesn't match your Orka cluster. Rebuild or pull the image with the correct architecture.
+
+For more information about Orka's architecture support, see the [Orka Apple Silicon documentation](https://support.macstadium.com/hc/en-us/articles/28340672222363-Apple-Silicon-Based-Support).
+
 ### Environment variables
 
 The Orka GitHub runner requires the following environment variabales to be configured:
+
 * `GITHUB_APP_ID`: The unique identifier for the GitHub App. Detailed instructions on setting up a GitHub app can be found [here](./docs/github-app-setup-steps.md).
 * `GITHUB_APP_INSTALLATION_ID`: The installation identifier for the GitHub App.
 * `GITHUB_APP_PRIVATE_KEY_PATH` or `GITHUB_APP_PRIVATE_KEY`: The private key associated with the GitHub App. You can either provide the file path to the private key using `GITHUB_APP_PRIVATE_KEY_PATH` or directly provide the private key string using `GITHUB_APP_PRIVATE_KEY`. At least one of these environment variables must be set.
 * `GITHUB_URL`: The URL of the GitHub repository or organization.
-* `GITHUB_API_URL`: (Optional) The URL of the GitHub API endpoint. If not provided, it will default to github.com api endpoint if Github URL starts with "https://github.com" otherwise defaults to "<GITHUB_URL>/api/v3"
+* `GITHUB_API_URL`: (Optional) The URL of the GitHub API endpoint. If not provided, it will default to github.com api endpoint if Github URL starts with "<https://github.com>" otherwise defaults to "<GITHUB_URL>/api/v3"
 * `GITHUB_TOKEN`: (Optional) A GitHub token to avoid rate limiting. Required for GitHub Enterprise Server.
 * `ORKA_URL`: The URL of the Orka server.
 * `ORKA_TOKEN`: The authentication token for accessing the Orka API. A token can be generated by an admin user with the command `orka3 sa token <service-account-name>`.
@@ -100,6 +153,7 @@ Currently, our setup supports only one runner scale set. However, if you need to
 ## How to upgrade?
 
 Upgrading the Orka GitHub plugin to the latest version ensures you have the latest features and bug fixes. Follow these steps to upgrade the plugin:
+
 1. <b>Check for updates</b>: Visit [the Orka GitHub packages page](https://github.com/macstadium/orka-github-actions-integration/pkgs/container/orka-github-runner) to find the latest version of the plugin.
 1. <b>Download latest release</b>: Use the command `docker pull ghcr.io/macstadium/orka-github-runner:<version>` to download the latest release of the Orka GitHub plugin.
 1. <b>Check for running GitHub CI jobs</b>: Before proceeding, verify that there are no active CI jobs that are currently running.
