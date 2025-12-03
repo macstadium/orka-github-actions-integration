@@ -17,10 +17,13 @@ import (
 )
 
 const (
-	cancelledStatus = "canceled"
-	ignoredStatus   = "ignored"
-	abandonedStatus = "abandoned"
-	defaultJobId    = "missing-job-id"
+	cancelledStatus           = "canceled"
+	ignoredStatus             = "ignored"
+	abandonedStatus           = "abandoned"
+	defaultJobId              = "missing-job-id"
+	maxProvisioningRetries    = 3
+	provisioningRetryInterval = 15 * time.Second
+	acquiredJobTimeout        = 5 * time.Minute
 )
 
 func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerInterface, runnerProvisioner RunnerProvisionerInterface, runnerScaleSet *types.RunnerScaleSet) *RunnerMessageProcessor {
@@ -32,15 +35,20 @@ func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerI
 		runnerScaleSetName: runnerScaleSet.Name,
 		canceledJobs:       map[string]bool{},
 		canceledJobsMutex:  sync.RWMutex{},
+		acquiredJobs:       map[int64]*AcquiredJobInfo{},
+		acquiredJobsMutex:  sync.RWMutex{},
 	}
 }
 
 func (p *RunnerMessageProcessor) StartProcessingMessages() error {
+	go p.monitorStuckJobs()
+
 	for {
 		p.logger.Infof("waiting for message for runner %s...", p.runnerScaleSetName)
 		select {
 		case <-p.ctx.Done():
 			p.logger.Infof("message processing service is stopped for runner %s", p.runnerScaleSetName)
+			p.logStuckJobs()
 			return nil
 		default:
 			err := p.runnerManager.ProcessMessages(p.ctx, p.processRunnerMessage)
@@ -101,7 +109,12 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 				return fmt.Errorf("could not decode job available message. %w", err)
 			}
 			p.logger.Infof("Job available message received for JobId: %s, RunnerRequestId: %d", jobAvailable.JobId, jobAvailable.RunnerRequestId)
-			availableJobs = append(availableJobs, jobAvailable.RunnerRequestId)
+
+			if !p.isJobAcquired(jobAvailable.RunnerRequestId) {
+				availableJobs = append(availableJobs, jobAvailable.RunnerRequestId)
+			} else {
+				p.logger.Warnf("Job %d already acquired, skipping", jobAvailable.RunnerRequestId)
+			}
 		case "JobAssigned":
 			var jobAssigned types.JobAssigned
 			if err := json.Unmarshal(message, &jobAssigned); err != nil {
@@ -110,28 +123,41 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 
 			p.logger.Infof("Job assigned message received for JobId: %s, RunnerRequestId: %d", jobAssigned.JobId, jobAssigned.RunnerRequestId)
 
+			p.updateAcquiredJobWithId(jobAssigned.RunnerRequestId, jobAssigned.JobId)
+
 			if provisionedRunners < requiredRunners {
 				provisionedRunners++
 				p.logger.Infof("number of runners provisioning started: %d. Max required runners: %d", provisionedRunners, requiredRunners)
-				go func() {
-					jobId := jobAssigned.JobId
+				go func(runnerRequestId int64, jobId string) {
 					if jobId == "" {
 						jobId = defaultJobId
 					}
 
-					for attempt := 1; !p.isCanceled(jobId); attempt++ {
+					provisioned := false
+					for attempt := 1; attempt <= maxProvisioningRetries && !p.isCanceled(jobId); attempt++ {
+						p.logger.Infof("Provisioning runner for job %s (RunnerRequestId: %d), attempt %d/%d", jobId, runnerRequestId, attempt, maxProvisioningRetries)
+
 						err := p.runnerProvisioner.ProvisionRunner(p.ctx)
 						if err == nil {
+							p.logger.Infof("Successfully provisioned runner for job %s (RunnerRequestId: %d)", jobId, runnerRequestId)
+							provisioned = true
 							break
 						}
 
-						p.logger.Errorf("unable to provision Orka runner for %s (attempt %d). More information: %s", p.runnerScaleSetName, attempt, err.Error())
+						p.logger.Errorf("Failed to provision runner for job %s (RunnerRequestId: %d) attempt %d/%d: %s", jobId, runnerRequestId, attempt, maxProvisioningRetries, err.Error())
 
-						time.Sleep(15 * time.Second)
+						if attempt < maxProvisioningRetries {
+							time.Sleep(provisioningRetryInterval)
+						}
+					}
+
+					if !provisioned && !p.isCanceled(jobId) {
+						p.logger.Errorf("Exhausted all %d provisioning attempts for job %s (RunnerRequestId: %d). Job may be stuck in queue.", maxProvisioningRetries, jobId, runnerRequestId)
 					}
 
 					p.removeCanceledJob(jobId)
-				}()
+					p.removeAcquiredJob(runnerRequestId)
+				}(jobAssigned.RunnerRequestId, jobAssigned.JobId)
 			}
 		case "JobStarted":
 			var jobStarted types.JobStarted
@@ -139,6 +165,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 				return fmt.Errorf("could not decode job started message. %w", err)
 			}
 			p.logger.Infof("Job started message received for JobId: %s, RunnerRequestId: %d, RunnerId: %d", jobStarted.JobId, jobStarted.RunnerRequestId, jobStarted.RunnerId)
+			p.removeAcquiredJob(jobStarted.RunnerRequestId)
 		case "JobCompleted":
 			var jobCompleted types.JobCompleted
 			if err := json.Unmarshal(message, &jobCompleted); err != nil {
@@ -146,6 +173,8 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 			}
 
 			p.logger.Infof("Job completed message received for JobId: %s, RunnerRequestId: %d, RunnerId: %d, RunnerName: %s, with Result: %s", jobCompleted.JobId, jobCompleted.RunnerRequestId, jobCompleted.RunnerId, jobCompleted.RunnerName, jobCompleted.Result)
+
+			p.removeAcquiredJob(jobCompleted.RunnerRequestId)
 
 			if jobCompleted.JobId != "" && (jobCompleted.Result == cancelledStatus || jobCompleted.Result == ignoredStatus || jobCompleted.Result == abandonedStatus) {
 				p.setCanceledJob(jobCompleted.JobId)
@@ -155,9 +184,15 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 		}
 	}
 
-	err := p.runnerManager.AcquireJobs(p.ctx, availableJobs)
-	if err != nil {
-		return fmt.Errorf("could not acquire jobs. %w", err)
+	if len(availableJobs) > 0 {
+		err := p.runnerManager.AcquireJobs(p.ctx, availableJobs)
+		if err != nil {
+			return fmt.Errorf("could not acquire jobs. %w", err)
+		}
+
+		for _, requestId := range availableJobs {
+			p.trackAcquiredJob(requestId, "")
+		}
 	}
 
 	return nil
@@ -179,4 +214,90 @@ func (p *RunnerMessageProcessor) removeCanceledJob(jobId string) {
 	p.canceledJobsMutex.Lock()
 	defer p.canceledJobsMutex.Unlock()
 	delete(p.canceledJobs, jobId)
+}
+
+func (p *RunnerMessageProcessor) trackAcquiredJob(runnerRequestId int64, jobId string) {
+	p.acquiredJobsMutex.Lock()
+	defer p.acquiredJobsMutex.Unlock()
+	p.acquiredJobs[runnerRequestId] = &AcquiredJobInfo{
+		RunnerRequestId: runnerRequestId,
+		JobId:           jobId,
+		AcquiredAt:      time.Now(),
+		RetryCount:      0,
+	}
+	p.logger.Infof("Tracked acquired job: RunnerRequestId=%d, JobId=%s", runnerRequestId, jobId)
+}
+
+func (p *RunnerMessageProcessor) updateAcquiredJobWithId(runnerRequestId int64, jobId string) {
+	p.acquiredJobsMutex.Lock()
+	defer p.acquiredJobsMutex.Unlock()
+	if job, exists := p.acquiredJobs[runnerRequestId]; exists {
+		job.JobId = jobId
+		p.logger.Infof("Updated acquired job with JobId: RunnerRequestId=%d, JobId=%s", runnerRequestId, jobId)
+	} else {
+		p.acquiredJobs[runnerRequestId] = &AcquiredJobInfo{
+			RunnerRequestId: runnerRequestId,
+			JobId:           jobId,
+			AcquiredAt:      time.Now(),
+			RetryCount:      0,
+		}
+		p.logger.Infof("Tracked acquired job: RunnerRequestId=%d, JobId=%s", runnerRequestId, jobId)
+	}
+}
+
+func (p *RunnerMessageProcessor) removeAcquiredJob(runnerRequestId int64) {
+	p.acquiredJobsMutex.Lock()
+	defer p.acquiredJobsMutex.Unlock()
+	if _, exists := p.acquiredJobs[runnerRequestId]; exists {
+		p.logger.Infof("Removing tracked job: RunnerRequestId=%d", runnerRequestId)
+		delete(p.acquiredJobs, runnerRequestId)
+	}
+}
+
+func (p *RunnerMessageProcessor) isJobAcquired(runnerRequestId int64) bool {
+	p.acquiredJobsMutex.RLock()
+	defer p.acquiredJobsMutex.RUnlock()
+	_, exists := p.acquiredJobs[runnerRequestId]
+	return exists
+}
+
+func (p *RunnerMessageProcessor) getAcquiredJobs() []*AcquiredJobInfo {
+	p.acquiredJobsMutex.RLock()
+	defer p.acquiredJobsMutex.RUnlock()
+
+	jobs := make([]*AcquiredJobInfo, 0, len(p.acquiredJobs))
+	for _, job := range p.acquiredJobs {
+		jobs = append(jobs, job)
+	}
+	return jobs
+}
+
+func (p *RunnerMessageProcessor) monitorStuckJobs() {
+	ticker := time.NewTicker(2 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-p.ctx.Done():
+			return
+		case <-ticker.C:
+			p.logStuckJobs()
+		}
+	}
+}
+
+func (p *RunnerMessageProcessor) logStuckJobs() {
+	jobs := p.getAcquiredJobs()
+	if len(jobs) == 0 {
+		return
+	}
+
+	now := time.Now()
+	for _, job := range jobs {
+		elapsed := now.Sub(job.AcquiredAt)
+		if elapsed > acquiredJobTimeout {
+			p.logger.Warnf("Job potentially stuck: RunnerRequestId=%d, JobId=%s, AcquiredAt=%s, Elapsed=%s",
+				job.RunnerRequestId, job.JobId, job.AcquiredAt.Format(time.RFC3339), elapsed.String())
+		}
+	}
 }
