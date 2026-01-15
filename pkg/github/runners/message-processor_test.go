@@ -151,12 +151,52 @@ func TestLogStuckJobs_WithStuckJob(t *testing.T) {
 	processor := NewRunnerMessageProcessor(ctx, mockManager, mockProvisioner, runnerScaleSet)
 
 	runnerRequestId := int64(12345)
-	processor.trackAcquiredJob(runnerRequestId, "job-abc-123")
+	jobId := "job-abc-123"
+	processor.trackAcquiredJob(runnerRequestId, jobId)
 
+	// Verify job is tracked before cleanup
+	assert.True(t, processor.isJobAcquired(runnerRequestId))
+	assert.False(t, processor.isCanceled(jobId))
+
+	// Manually set the acquired time to simulate a stuck job
 	job := processor.acquiredJobs[runnerRequestId]
 	job.AcquiredAt = time.Now().Add(-6 * time.Minute)
 
+	// Call cleanup function
 	processor.logStuckJobs()
+
+	// Verify job was removed from tracking
+	assert.False(t, processor.isJobAcquired(runnerRequestId))
+	// Verify job was marked as canceled
+	assert.True(t, processor.isCanceled(jobId))
+}
+
+func TestLogStuckJobs_WithStuckJobDefaultId(t *testing.T) {
+	ctx := context.Background()
+	mockManager := new(MockRunnerManager)
+	mockProvisioner := new(MockRunnerProvisioner)
+	runnerScaleSet := &types.RunnerScaleSet{Id: 1, Name: "test-runner"}
+
+	processor := NewRunnerMessageProcessor(ctx, mockManager, mockProvisioner, runnerScaleSet)
+
+	runnerRequestId := int64(12345)
+	// Track with default job ID (should not be marked as canceled)
+	processor.trackAcquiredJob(runnerRequestId, defaultJobId)
+
+	// Verify job is tracked before cleanup
+	assert.True(t, processor.isJobAcquired(runnerRequestId))
+
+	// Manually set the acquired time to simulate a stuck job
+	job := processor.acquiredJobs[runnerRequestId]
+	job.AcquiredAt = time.Now().Add(-6 * time.Minute)
+
+	// Call cleanup function
+	processor.logStuckJobs()
+
+	// Verify job was removed from tracking
+	assert.False(t, processor.isJobAcquired(runnerRequestId))
+	// Verify default job ID was NOT marked as canceled
+	assert.False(t, processor.isCanceled(defaultJobId))
 }
 
 func TestCanceledJobFunctions(t *testing.T) {

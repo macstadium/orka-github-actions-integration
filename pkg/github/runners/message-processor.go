@@ -24,6 +24,7 @@ const (
 	maxProvisioningRetries    = 3
 	provisioningRetryInterval = 15 * time.Second
 	acquiredJobTimeout        = 5 * time.Minute
+	provisioningTimeout       = 10 * time.Minute
 )
 
 func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerInterface, runnerProvisioner RunnerProvisionerInterface, runnerScaleSet *types.RunnerScaleSet) *RunnerMessageProcessor {
@@ -137,14 +138,22 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 					for attempt := 1; attempt <= maxProvisioningRetries && !p.isCanceled(jobId); attempt++ {
 						p.logger.Infof("Provisioning runner for job %s (RunnerRequestId: %d), attempt %d/%d", jobId, runnerRequestId, attempt, maxProvisioningRetries)
 
-						err := p.runnerProvisioner.ProvisionRunner(p.ctx)
+						// Create timeout context for this provisioning attempt
+						provisionCtx, cancel := context.WithTimeout(p.ctx, provisioningTimeout)
+						err := p.runnerProvisioner.ProvisionRunner(provisionCtx)
+						cancel() // Clean up context resources
+
 						if err == nil {
 							p.logger.Infof("Successfully provisioned runner for job %s (RunnerRequestId: %d)", jobId, runnerRequestId)
 							provisioned = true
 							break
 						}
 
-						p.logger.Errorf("Failed to provision runner for job %s (RunnerRequestId: %d) attempt %d/%d: %s", jobId, runnerRequestId, attempt, maxProvisioningRetries, err.Error())
+						if err == context.DeadlineExceeded {
+							p.logger.Errorf("Provisioning timeout for job %s (RunnerRequestId: %d) attempt %d/%d after %s", jobId, runnerRequestId, attempt, maxProvisioningRetries, provisioningTimeout)
+						} else {
+							p.logger.Errorf("Failed to provision runner for job %s (RunnerRequestId: %d) attempt %d/%d: %s", jobId, runnerRequestId, attempt, maxProvisioningRetries, err.Error())
+						}
 
 						if attempt < maxProvisioningRetries {
 							time.Sleep(provisioningRetryInterval)
@@ -296,8 +305,18 @@ func (p *RunnerMessageProcessor) logStuckJobs() {
 	for _, job := range jobs {
 		elapsed := now.Sub(job.AcquiredAt)
 		if elapsed > acquiredJobTimeout {
-			p.logger.Warnf("Job potentially stuck: RunnerRequestId=%d, JobId=%s, AcquiredAt=%s, Elapsed=%s",
+			p.logger.Warnf("Job stuck and will be cleaned up: RunnerRequestId=%d, JobId=%s, AcquiredAt=%s, Elapsed=%s",
 				job.RunnerRequestId, job.JobId, job.AcquiredAt.Format(time.RFC3339), elapsed.String())
+
+			// Mark job as canceled to stop any ongoing provisioning attempts
+			if job.JobId != "" && job.JobId != defaultJobId {
+				p.setCanceledJob(job.JobId)
+				p.logger.Infof("Marked stuck job as canceled: JobId=%s", job.JobId)
+			}
+
+			// Remove from tracking to allow cleanup
+			p.removeAcquiredJob(job.RunnerRequestId)
+			p.logger.Infof("Removed stuck job from tracking: RunnerRequestId=%d", job.RunnerRequestId)
 		}
 	}
 }
