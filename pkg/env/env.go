@@ -3,13 +3,13 @@ package env
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
-
-	"log"
+	"time"
 
 	"github.com/joho/godotenv"
 	"github.com/macstadium/orka-github-actions-integration/pkg/constants"
@@ -45,6 +45,9 @@ type Data struct {
 
 	Runners []Runner
 
+	RunnerDeregistrationTimeout      time.Duration
+	RunnerDeregistrationPollInterval time.Duration
+
 	LogLevel string
 }
 
@@ -70,6 +73,9 @@ func ParseEnv() *Data {
 		OrkaVMMetadata: getEnvWithDefault(OrkaVMMetadataEnvName, ""),
 
 		OrkaEnableNodeIPMapping: getBoolEnv(OrkaEnableNodeIPMappingEnvName, false),
+
+		RunnerDeregistrationTimeout:      getDurationEnv(RunnerDeregistrationTimeoutEnvName, 30*time.Second),
+		RunnerDeregistrationPollInterval: getDurationEnv(RunnerDeregistrationPollIntervalEnvName, 2*time.Second),
 
 		LogLevel: getEnvWithDefault(LogLevelEnvName, logging.LogLevelInfo),
 	}
@@ -189,6 +195,21 @@ func getBoolEnv(key string, fallback bool) bool {
 	}
 
 	return strings.ToLower(value) == "true"
+}
+
+func getDurationEnv(key string, fallback time.Duration) time.Duration {
+	value := os.Getenv(key)
+
+	if len(value) == 0 {
+		return fallback
+	}
+
+	duration, err := time.ParseDuration(value)
+	if err != nil {
+		return fallback
+	}
+
+	return duration
 }
 
 func getRunnersFromEnv() ([]Runner, error) {

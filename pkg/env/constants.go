@@ -24,5 +24,8 @@ const (
 
 	RunnersEnvName = "RUNNERS"
 
+	RunnerDeregistrationTimeoutEnvName      = "RUNNER_DEREGISTRATION_TIMEOUT"
+	RunnerDeregistrationPollIntervalEnvName = "RUNNER_DEREGISTRATION_POLL_INTERVAL"
+
 	LogLevelEnvName = "LOG_LEVEL"
 )
