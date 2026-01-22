@@ -7,6 +7,7 @@ package runners
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/actions"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/messagequeue"
@@ -42,4 +43,13 @@ type RunnerMessageProcessor struct {
 	runnerScaleSetName string
 	canceledJobs       map[string]bool
 	canceledJobsMutex  sync.RWMutex
+	acquiredJobs       map[int64]*AcquiredJobInfo
+	acquiredJobsMutex  sync.RWMutex
+}
+
+type AcquiredJobInfo struct {
+	RunnerRequestId int64
+	JobId           string
+	AcquiredAt      time.Time
+	RetryCount      int
 }
