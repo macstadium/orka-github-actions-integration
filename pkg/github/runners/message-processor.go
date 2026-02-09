@@ -25,13 +25,15 @@ const (
 
 func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerInterface, runnerProvisioner RunnerProvisionerInterface, runnerScaleSet *types.RunnerScaleSet) *RunnerMessageProcessor {
 	return &RunnerMessageProcessor{
-		ctx:                ctx,
-		runnerManager:      runnerManager,
-		runnerProvisioner:  runnerProvisioner,
-		logger:             logging.Logger.Named(fmt.Sprintf("runner-message-processor-%d", runnerScaleSet.Id)),
-		runnerScaleSetName: runnerScaleSet.Name,
-		canceledJobs:       map[string]bool{},
-		canceledJobsMutex:  sync.RWMutex{},
+		ctx:                             ctx,
+		runnerManager:                   runnerManager,
+		runnerProvisioner:               runnerProvisioner,
+		logger:                          logging.Logger.Named(fmt.Sprintf("runner-message-processor-%d", runnerScaleSet.Id)),
+		runnerScaleSetName:              runnerScaleSet.Name,
+		upstreamCanceledJobs:            map[string]bool{},
+		upstreamCanceledJobsMutex:       sync.RWMutex{},
+		provisioningContextCancels:      map[string]context.CancelFunc{},
+		provisioningContextCancelsMutex: sync.Mutex{},
 	}
 }
 
@@ -113,24 +115,37 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 			if provisionedRunners < requiredRunners {
 				provisionedRunners++
 				p.logger.Infof("number of runners provisioning started: %d. Max required runners: %d", provisionedRunners, requiredRunners)
-				go func() {
-					jobId := jobAssigned.JobId
-					if jobId == "" {
-						jobId = defaultJobId
-					}
 
-					for attempt := 1; !p.isCanceled(jobId); attempt++ {
-						err := p.runnerProvisioner.ProvisionRunner(p.ctx)
+				jobId := jobAssigned.JobId
+				if jobId == "" {
+					jobId = defaultJobId
+				}
+
+				provisioningContext, cancel := context.WithCancel(p.ctx)
+				p.storeProvisioningContextCancel(jobId, cancel)
+
+				go func() {
+					defer p.removeUpstreamCanceledJob(jobId)
+					defer p.cancelProvisioningContext(jobId)
+
+					for attempt := 1; !p.isUpstreamCanceled(jobId); attempt++ {
+						err := p.runnerProvisioner.ProvisionRunner(provisioningContext)
+						if provisioningContext.Err() != nil {
+							break
+						}
+
 						if err == nil {
 							break
 						}
 
 						p.logger.Errorf("unable to provision Orka runner for %s (attempt %d). More information: %s", p.runnerScaleSetName, attempt, err.Error())
 
-						time.Sleep(15 * time.Second)
+						select {
+						case <-provisioningContext.Done():
+							return
+						case <-time.After(15 * time.Second):
+						}
 					}
-
-					p.removeCanceledJob(jobId)
 				}()
 			}
 		case "JobStarted":
@@ -147,8 +162,10 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 
 			p.logger.Infof("Job completed message received for JobId: %s, RunnerRequestId: %d, RunnerId: %d, RunnerName: %s, with Result: %s", jobCompleted.JobId, jobCompleted.RunnerRequestId, jobCompleted.RunnerId, jobCompleted.RunnerName, jobCompleted.Result)
 
+			p.cancelProvisioningContext(jobCompleted.JobId)
+
 			if jobCompleted.JobId != "" && (jobCompleted.Result == cancelledStatus || jobCompleted.Result == ignoredStatus || jobCompleted.Result == abandonedStatus) {
-				p.setCanceledJob(jobCompleted.JobId)
+				p.setUpstreamCanceledJob(jobCompleted.JobId)
 			}
 		default:
 			p.logger.Infof("unknown job message type %s", messageType.MessageType)
@@ -163,20 +180,35 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 	return nil
 }
 
-func (p *RunnerMessageProcessor) isCanceled(jobId string) bool {
-	p.canceledJobsMutex.RLock()
-	defer p.canceledJobsMutex.RUnlock()
-	return p.canceledJobs[jobId]
+func (p *RunnerMessageProcessor) isUpstreamCanceled(jobId string) bool {
+	p.upstreamCanceledJobsMutex.RLock()
+	defer p.upstreamCanceledJobsMutex.RUnlock()
+	return p.upstreamCanceledJobs[jobId]
 }
 
-func (p *RunnerMessageProcessor) setCanceledJob(jobId string) {
-	p.canceledJobsMutex.Lock()
-	defer p.canceledJobsMutex.Unlock()
-	p.canceledJobs[jobId] = true
+func (p *RunnerMessageProcessor) setUpstreamCanceledJob(jobId string) {
+	p.upstreamCanceledJobsMutex.Lock()
+	defer p.upstreamCanceledJobsMutex.Unlock()
+	p.upstreamCanceledJobs[jobId] = true
 }
 
-func (p *RunnerMessageProcessor) removeCanceledJob(jobId string) {
-	p.canceledJobsMutex.Lock()
-	defer p.canceledJobsMutex.Unlock()
-	delete(p.canceledJobs, jobId)
+func (p *RunnerMessageProcessor) removeUpstreamCanceledJob(jobId string) {
+	p.upstreamCanceledJobsMutex.Lock()
+	defer p.upstreamCanceledJobsMutex.Unlock()
+	delete(p.upstreamCanceledJobs, jobId)
+}
+
+func (p *RunnerMessageProcessor) storeProvisioningContextCancel(jobId string, cancel context.CancelFunc) {
+	p.provisioningContextCancelsMutex.Lock()
+	defer p.provisioningContextCancelsMutex.Unlock()
+	p.provisioningContextCancels[jobId] = cancel
+}
+
+func (p *RunnerMessageProcessor) cancelProvisioningContext(jobId string) {
+	p.provisioningContextCancelsMutex.Lock()
+	defer p.provisioningContextCancelsMutex.Unlock()
+	if cancel, exists := p.provisioningContextCancels[jobId]; exists {
+		cancel()
+		delete(p.provisioningContextCancels, jobId)
+	}
 }

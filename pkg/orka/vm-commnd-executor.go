@@ -2,6 +2,7 @@ package orka
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -23,7 +24,7 @@ const (
 	maxRetries = 20
 )
 
-func (executor *VMCommandExecutor) ExecuteCommands(commands ...string) error {
+func (executor *VMCommandExecutor) ExecuteCommands(ctx context.Context, commands ...string) error {
 	sshConfig := &ssh.ClientConfig{
 		HostKeyCallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
 			return nil
@@ -33,7 +34,7 @@ func (executor *VMCommandExecutor) ExecuteCommands(commands ...string) error {
 		Timeout: time.Second * 10,
 	}
 
-	client, err := executor.connectWithRetries(sshConfig, fmt.Sprintf("%s:%d", executor.VMIP, executor.VMPort))
+	client, err := executor.connectWithRetries(ctx, sshConfig, fmt.Sprintf("%s:%d", executor.VMIP, executor.VMPort))
 	if err != nil {
 		return err
 	}
@@ -77,12 +78,18 @@ func (executor *VMCommandExecutor) ExecuteCommands(commands ...string) error {
 		return err
 	}
 
-	err = session.Wait()
-	if err != nil {
+	done := make(chan error, 1)
+	go func() {
+		done <- session.Wait()
+	}()
+
+	select {
+	case <-ctx.Done():
+		_ = session.Close()
+		return ctx.Err()
+	case err := <-done:
 		return err
 	}
-
-	return nil
 }
 
 type FormatFunc func(string) string
@@ -95,8 +102,12 @@ func printFormattedOutput(reader io.Reader, format FormatFunc) {
 	}
 }
 
-func (executor *VMCommandExecutor) connectWithRetries(cfg *ssh.ClientConfig, addr string) (*ssh.Client, error) {
+func (executor *VMCommandExecutor) connectWithRetries(ctx context.Context, cfg *ssh.ClientConfig, addr string) (*ssh.Client, error) {
 	for attempt := 1; attempt <= maxRetries; attempt++ {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+
 		client, err := ssh.Dial("tcp", addr, cfg)
 		if err == nil {
 			return client, nil
@@ -104,12 +115,12 @@ func (executor *VMCommandExecutor) connectWithRetries(cfg *ssh.ClientConfig, add
 
 		fmt.Printf("Failed to connect to VM (attempt %d/%d): %v\n", attempt, maxRetries, err)
 
-		if attempt < maxRetries {
-			time.Sleep(3 * time.Second)
-		} else {
-			return nil, fmt.Errorf("failed to connect to VM after %d attempts: %v", maxRetries, err)
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(3 * time.Second):
 		}
 	}
 
-	return nil, fmt.Errorf("failed to connect to VM")
+	return nil, fmt.Errorf("failed to connect to VM after %d attempts", maxRetries)
 }

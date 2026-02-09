@@ -35,11 +35,13 @@ type RunnerProvisionerInterface interface {
 }
 
 type RunnerMessageProcessor struct {
-	ctx                context.Context
-	logger             *zap.SugaredLogger
-	runnerManager      RunnerManagerInterface
-	runnerProvisioner  RunnerProvisionerInterface
-	runnerScaleSetName string
-	canceledJobs       map[string]bool
-	canceledJobsMutex  sync.RWMutex
+	ctx                             context.Context
+	logger                          *zap.SugaredLogger
+	runnerManager                   RunnerManagerInterface
+	runnerProvisioner               RunnerProvisionerInterface
+	runnerScaleSetName              string
+	upstreamCanceledJobs            map[string]bool
+	upstreamCanceledJobsMutex       sync.RWMutex
+	provisioningContextCancels      map[string]context.CancelFunc
+	provisioningContextCancelsMutex sync.Mutex
 }

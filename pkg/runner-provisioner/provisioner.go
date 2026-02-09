@@ -53,7 +53,12 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) error {
 	runnerName := vmResponse.Name
 	p.logger.Infof("deployed Orka VM with name %s", runnerName)
 
-	defer p.deleteVM(ctx, runnerName)
+	defer func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+
+		p.deleteVM(cleanupCtx, runnerName)
+	}()
 
 	vmIP, err := p.getRealVMIP(vmResponse.IP)
 	if err != nil {
@@ -75,7 +80,7 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) error {
 		VMPassword: p.envData.OrkaVMPassword,
 	}
 
-	err = vmCommandExecutor.ExecuteCommands(buildCommands(jitConfig.EncodedJITConfig, p.envData.GitHubRunnerVersion, p.envData.OrkaVMUsername)...)
+	err = vmCommandExecutor.ExecuteCommands(ctx, buildCommands(jitConfig.EncodedJITConfig, p.envData.GitHubRunnerVersion, p.envData.OrkaVMUsername)...)
 	if err != nil {
 		return err
 	}
