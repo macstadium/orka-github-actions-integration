@@ -132,12 +132,17 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 
 					defer p.removeUpstreamCanceledJob(jobId)
 
-					executor, commands, cleanup, provisioningErr := p.provisionRunnerWithRetry(jobContext, jobId)
+					executor, commands, provisioningErr := p.provisionRunnerWithRetry(jobContext, jobId)
 					if provisioningErr != nil {
 						p.logger.Errorf("unable to provision Orka runner for %s: %v", p.runnerScaleSetName, provisioningErr)
 						p.cancelJobContext(jobId, "provisioning failed")
 						return
 					}
+
+					context.AfterFunc(jobContext, func() {
+						p.logger.Infof("cleaning up resources for %s after job context is canceled", executor.VMName)
+						p.runnerProvisioner.CleanupResources(context.WithoutCancel(p.ctx), executor.VMName)
+					})
 
 					defer func() {
 						var exitErr *ssh.ExitError
@@ -160,7 +165,6 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 							p.logger.Infof("execution completed successfully for JobId %s. Cleaning up resources.", jobId)
 						}
 
-						cleanup(executionErr)
 						p.cancelJobContext(jobId, cancelReason)
 					}()
 
@@ -199,15 +203,15 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 	return nil
 }
 
-func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, jobId string) (*orka.VMCommandExecutor, []string, func(error), error) {
+func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, jobId string) (*orka.VMCommandExecutor, []string, error) {
 	for attempt := 1; !p.isUpstreamCanceled(jobId); attempt++ {
-		executor, commands, cleanup, err := p.runnerProvisioner.ProvisionRunner(ctx)
+		executor, commands, err := p.runnerProvisioner.ProvisionRunner(ctx)
 		if ctx.Err() != nil {
-			return nil, nil, nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		}
 
 		if err == nil {
-			return executor, commands, cleanup, nil
+			return executor, commands, nil
 		}
 
 		p.logger.Errorf(
@@ -219,12 +223,12 @@ func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, j
 
 		select {
 		case <-ctx.Done():
-			return nil, nil, nil, nil
+			return nil, nil, nil
 		case <-time.After(15 * time.Second):
 		}
 	}
 
-	return nil, nil, nil, fmt.Errorf("unable to provision Orka runner for %s", p.runnerScaleSetName)
+	return nil, nil, fmt.Errorf("unable to provision Orka runner for %s", p.runnerScaleSetName)
 }
 
 func (p *RunnerMessageProcessor) executeJobCommands(ctx context.Context, jobId string, executor *orka.VMCommandExecutor, commands []string) error {

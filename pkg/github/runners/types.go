@@ -32,7 +32,8 @@ type RunnerManager struct {
 }
 
 type RunnerProvisionerInterface interface {
-	ProvisionRunner(ctx context.Context) (*orka.VMCommandExecutor, []string, func(error), error)
+	ProvisionRunner(ctx context.Context) (*orka.VMCommandExecutor, []string, error)
+	CleanupResources(ctx context.Context, runnerName string)
 }
 
 type RunnerMessageProcessor struct {
