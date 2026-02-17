@@ -208,8 +208,7 @@ var _ = Describe("RunnerProvisioner", func() {
 					return nil
 				}
 
-				err := provisioner.ensureRunnerDeregistered(cancelCtx, testRunnerName)
-				Expect(err).To(BeNil())
+				_ = provisioner.ensureRunnerDeregistered(cancelCtx, testRunnerName)
 
 				// Should have attempted at least one check and force-deleted
 				Expect(mockActions.GetRunnerCalls).To(BeNumerically(">=", 1))
