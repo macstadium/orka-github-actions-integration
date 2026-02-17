@@ -43,26 +43,40 @@ var commands_template = []string{
 	"echo 'Git Action Runner exited'",
 }
 
-func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) error {
-	p.logger.Infof("deploying Orka VM with prefix  %s", p.runnerScaleSet.Name)
+func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) (err error) {
+	p.logger.Infof("deploying Orka VM with prefix %s", p.runnerScaleSet.Name)
 	vmResponse, err := p.orkaClient.DeployVM(ctx, p.runnerScaleSet.Name, p.envData.OrkaVMConfig)
 	if err != nil {
+		p.logger.Errorf("failed to deploy Orka VM: %v", err)
 		return err
 	}
 
 	runnerName := vmResponse.Name
 	p.logger.Infof("deployed Orka VM with name %s", runnerName)
 
-	defer p.cleanupResources(context.WithoutCancel(ctx), runnerName)
+	defer func() {
+		if err != nil {
+			if ctx.Err() != nil {
+				p.logger.Warnf("context cancelled/timed out, triggering cleanup for %s", runnerName)
+			} else {
+				p.logger.Errorf("provisioning failed with error, triggering cleanup for %s: %v", runnerName, err)
+			}
+		} else {
+			p.logger.Infof("provisioning and execution completed normally, triggering cleanup for %s", runnerName)
+		}
+		p.cleanupResources(context.WithoutCancel(ctx), runnerName)
+	}()
 
 	vmIP, err := p.getRealVMIP(vmResponse.IP)
 	if err != nil {
+		p.logger.Errorf("failed to get real VM IP for %s: %v", runnerName, err)
 		return err
 	}
 
 	p.logger.Infof("creating runner with name %s", runnerName)
 	jitConfig, err := p.createRunner(ctx, runnerName)
 	if err != nil {
+		p.logger.Errorf("failed to create runner config for %s: %v", runnerName, err)
 		return err
 	}
 	p.logger.Infof("created runner with name %s", runnerName)
@@ -73,8 +87,10 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) error {
 		VMName:     runnerName,
 		VMUsername: p.envData.OrkaVMUsername,
 		VMPassword: p.envData.OrkaVMPassword,
+		Logger:     p.logger,
 	}
 
+	p.logger.Infof("starting command execution on VM %s", runnerName)
 	err = vmCommandExecutor.ExecuteCommands(ctx, buildCommands(jitConfig.EncodedJITConfig, p.envData.GitHubRunnerVersion, p.envData.OrkaVMUsername)...)
 	if err != nil {
 		return err
@@ -96,6 +112,8 @@ func (p *RunnerProvisioner) getRealVMIP(vmIP string) (string, error) {
 }
 
 func (p *RunnerProvisioner) cleanupResources(ctx context.Context, runnerName string) {
+	p.logger.Infof("starting resource cleanup for %s", runnerName)
+
 	for {
 		err := p.ensureRunnerDeregistered(ctx, runnerName)
 		if err != nil {
@@ -115,20 +133,28 @@ func (p *RunnerProvisioner) cleanupResources(ctx context.Context, runnerName str
 }
 
 func (p *RunnerProvisioner) deleteVM(ctx context.Context, runnerName string) {
-	p.logger.Infof("deleting Orka VM with name %s", runnerName)
+	p.logger.Infof("initiating deletion of Orka VM %s", runnerName)
+
+	attempts := 0
 	operation := func() error {
+		attempts++
 		err := p.orkaClient.DeleteVM(ctx, runnerName)
-		if err != nil && strings.Contains(err.Error(), "not found") {
-			p.logger.Warnf("vm not found for %s", runnerName)
-			return nil
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				p.logger.Warnf("Orka VM %s not found (it may have already been deleted)", runnerName)
+				return nil
+			}
+			p.logger.Warnf("attempt %d: failed to delete Orka VM %s: %v", attempts, runnerName, err)
+			return err
 		}
-		return err
+		return nil
 	}
+
 	err := backoff.Retry(operation, backoff.NewExponentialBackOff())
 	if err != nil {
-		p.logger.Infof("error while deleting Orka VM %s. More information: %s", runnerName, err.Error())
+		p.logger.Errorf("error while deleting Orka VM %s. More information: %s", runnerName, err.Error())
 	} else {
-		p.logger.Infof("deleted Orka VM with name %s", runnerName)
+		p.logger.Infof("successfully deleted Orka VM %s", runnerName)
 	}
 }
 
@@ -142,13 +168,14 @@ func (p *RunnerProvisioner) ensureRunnerDeregistered(ctx context.Context, runner
 	defer ticker.Stop()
 
 	if runner, err := p.actionsClient.GetRunner(ctx, runnerName); err == nil && runner == nil {
-		p.logger.Infof("runner %s has de-registered from GitHub", runnerName)
+		p.logger.Infof("runner %s has cleanly de-registered from GitHub", runnerName)
 		return nil
 	}
 
 	for {
 		select {
 		case <-ctx.Done():
+			p.logger.Warnf("context cancelled while waiting for runner %s to deregister: %v", runnerName, ctx.Err())
 			return ctx.Err()
 
 		case <-timeoutCtx.Done():
@@ -159,12 +186,12 @@ func (p *RunnerProvisioner) ensureRunnerDeregistered(ctx context.Context, runner
 		case <-ticker.C:
 			runner, err := p.actionsClient.GetRunner(ctx, runnerName)
 			if err != nil {
-				p.logger.Warnf("error checking runner %s registration status: %s", runnerName, err.Error())
+				p.logger.Warnf("error checking registration status for runner %s: %v", runnerName, err)
 				continue
 			}
 
 			if runner == nil {
-				p.logger.Infof("runner %s has de-registered from GitHub", runnerName)
+				p.logger.Infof("runner %s has cleanly de-registered from GitHub", runnerName)
 				return nil
 			}
 		}
@@ -174,7 +201,7 @@ func (p *RunnerProvisioner) ensureRunnerDeregistered(ctx context.Context, runner
 func (p *RunnerProvisioner) forceDeleteRunner(ctx context.Context, runnerName string) error {
 	runner, err := p.actionsClient.GetRunner(ctx, runnerName)
 	if err != nil {
-		p.logger.Errorf("error getting runner %s for force-deletion: %s", runnerName, err.Error())
+		p.logger.Errorf("failed to fetch runner %s for force-deletion: %v", runnerName, err)
 		return err
 	}
 
@@ -185,7 +212,7 @@ func (p *RunnerProvisioner) forceDeleteRunner(ctx context.Context, runnerName st
 
 	err = p.actionsClient.DeleteRunner(ctx, runner.Id)
 	if err != nil {
-		p.logger.Errorf("error force-deleting runner %s (ID: %d) from GitHub: %s", runnerName, runner.Id, err.Error())
+		p.logger.Errorf("failed to force-delete runner %s (ID: %d) from GitHub: %v", runnerName, runner.Id, err)
 		return err
 	}
 
@@ -194,8 +221,14 @@ func (p *RunnerProvisioner) forceDeleteRunner(ctx context.Context, runnerName st
 }
 
 func (p *RunnerProvisioner) createRunner(ctx context.Context, runnerName string) (*types.RunnerScaleSetJitRunnerConfig, error) {
+	p.logger.Debugf("waiting for lock to create runner %s", runnerName)
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.logger.Debugf("acquired lock for runner %s", runnerName)
+
+	defer func() {
+		p.mu.Unlock()
+		p.logger.Debugf("released lock for runner %s", runnerName)
+	}()
 
 	jitConfig, err := p.actionsClient.CreateRunner(ctx, p.runnerScaleSet.Id, runnerName)
 	if err != nil {
