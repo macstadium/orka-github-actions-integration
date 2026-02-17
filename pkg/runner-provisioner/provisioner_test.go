@@ -129,7 +129,8 @@ var _ = Describe("RunnerProvisioner", func() {
 					return &types.RunnerReference{Id: 123, Name: runnerName}, nil
 				}
 
-				provisioner.ensureRunnerDeregistered(ctx, testRunnerName)
+				err := provisioner.ensureRunnerDeregistered(ctx, testRunnerName)
+				Expect(err).To(BeNil())
 
 				Expect(mockActions.GetRunnerCalls).To(BeNumerically(">=", 2))
 				Expect(mockActions.DeleteRunnerCalls).To(Equal(0))
@@ -142,7 +143,8 @@ var _ = Describe("RunnerProvisioner", func() {
 					return nil, nil // Runner not found
 				}
 
-				provisioner.ensureRunnerDeregistered(ctx, testRunnerName)
+				err := provisioner.ensureRunnerDeregistered(ctx, testRunnerName)
+				Expect(err).To(BeNil())
 
 				Expect(mockActions.GetRunnerCalls).To(Equal(1))
 				Expect(mockActions.DeleteRunnerCalls).To(Equal(0))
@@ -161,7 +163,8 @@ var _ = Describe("RunnerProvisioner", func() {
 					return nil, nil
 				}
 
-				provisioner.ensureRunnerDeregistered(ctx, testRunnerName)
+				err := provisioner.ensureRunnerDeregistered(ctx, testRunnerName)
+				Expect(err).To(BeNil())
 
 				Expect(mockActions.GetRunnerCalls).To(BeNumerically(">=", 2))
 				Expect(mockActions.DeleteRunnerCalls).To(Equal(0))
@@ -183,7 +186,8 @@ var _ = Describe("RunnerProvisioner", func() {
 					return nil
 				}
 
-				provisioner.ensureRunnerDeregistered(ctx, testRunnerName)
+				err := provisioner.ensureRunnerDeregistered(ctx, testRunnerName)
+				Expect(err).To(BeNil())
 
 				Expect(mockActions.GetRunnerCalls).To(BeNumerically(">=", 1))
 				Expect(mockActions.DeleteRunnerCalls).To(Equal(1))
@@ -204,7 +208,8 @@ var _ = Describe("RunnerProvisioner", func() {
 					return nil
 				}
 
-				provisioner.ensureRunnerDeregistered(cancelCtx, testRunnerName)
+				err := provisioner.ensureRunnerDeregistered(cancelCtx, testRunnerName)
+				Expect(err).To(BeNil())
 
 				// Should have attempted at least one check and force-deleted
 				Expect(mockActions.GetRunnerCalls).To(BeNumerically(">=", 1))
@@ -224,7 +229,8 @@ var _ = Describe("RunnerProvisioner", func() {
 					return nil
 				}
 
-				provisioner.forceDeleteRunner(ctx, testRunnerName)
+				err := provisioner.forceDeleteRunner(ctx, testRunnerName)
+				Expect(err).To(BeNil())
 
 				Expect(mockActions.GetRunnerCalls).To(Equal(1))
 				Expect(mockActions.DeleteRunnerCalls).To(Equal(1))
@@ -237,7 +243,8 @@ var _ = Describe("RunnerProvisioner", func() {
 					return nil, nil // Runner not found
 				}
 
-				provisioner.forceDeleteRunner(ctx, testRunnerName)
+				err := provisioner.forceDeleteRunner(ctx, testRunnerName)
+				Expect(err).To(BeNil())
 
 				Expect(mockActions.GetRunnerCalls).To(Equal(1))
 				Expect(mockActions.DeleteRunnerCalls).To(Equal(0))
@@ -250,7 +257,8 @@ var _ = Describe("RunnerProvisioner", func() {
 					return nil, errors.New("API error")
 				}
 
-				provisioner.forceDeleteRunner(ctx, testRunnerName)
+				err := provisioner.forceDeleteRunner(ctx, testRunnerName)
+				Expect(err).To(Not(BeNil()))
 
 				Expect(mockActions.GetRunnerCalls).To(Equal(1))
 				Expect(mockActions.DeleteRunnerCalls).To(Equal(0))
@@ -266,7 +274,8 @@ var _ = Describe("RunnerProvisioner", func() {
 					return errors.New("delete failed")
 				}
 
-				provisioner.forceDeleteRunner(ctx, testRunnerName)
+				err := provisioner.forceDeleteRunner(ctx, testRunnerName)
+				Expect(err).To(Not(BeNil()))
 
 				Expect(mockActions.GetRunnerCalls).To(Equal(1))
 				Expect(mockActions.DeleteRunnerCalls).To(Equal(1))
