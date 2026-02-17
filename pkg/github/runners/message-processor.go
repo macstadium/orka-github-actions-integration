@@ -7,6 +7,7 @@ package runners
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -14,6 +15,8 @@ import (
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
+	"github.com/macstadium/orka-github-actions-integration/pkg/orka"
+	"golang.org/x/crypto/ssh"
 )
 
 const (
@@ -25,15 +28,15 @@ const (
 
 func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerInterface, runnerProvisioner RunnerProvisionerInterface, runnerScaleSet *types.RunnerScaleSet) *RunnerMessageProcessor {
 	return &RunnerMessageProcessor{
-		ctx:                             ctx,
-		runnerManager:                   runnerManager,
-		runnerProvisioner:               runnerProvisioner,
-		logger:                          logging.Logger.Named(fmt.Sprintf("runner-message-processor-%d", runnerScaleSet.Id)),
-		runnerScaleSetName:              runnerScaleSet.Name,
-		upstreamCanceledJobs:            map[string]bool{},
-		upstreamCanceledJobsMutex:       sync.RWMutex{},
-		provisioningContextCancels:      map[string]context.CancelFunc{},
-		provisioningContextCancelsMutex: sync.Mutex{},
+		ctx:                       ctx,
+		runnerManager:             runnerManager,
+		runnerProvisioner:         runnerProvisioner,
+		logger:                    logging.Logger.Named(fmt.Sprintf("runner-message-processor-%d", runnerScaleSet.Id)),
+		runnerScaleSetName:        runnerScaleSet.Name,
+		upstreamCanceledJobs:      map[string]bool{},
+		upstreamCanceledJobsMutex: sync.RWMutex{},
+		jobContextCancels:         map[string]context.CancelFunc{},
+		jobContextCancelsMutex:    sync.Mutex{},
 	}
 }
 
@@ -121,31 +124,47 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 					jobId = defaultJobId
 				}
 
-				provisioningContext, cancel := context.WithCancel(p.ctx)
-				p.storeProvisioningContextCancel(jobId, cancel)
+				jobContext, cancel := context.WithCancel(p.ctx)
+				p.storeJobContextCancel(jobId, cancel)
 
 				go func() {
+					var executionErr error
+
 					defer p.removeUpstreamCanceledJob(jobId)
-					defer p.cancelProvisioningContext(jobId)
 
-					for attempt := 1; !p.isUpstreamCanceled(jobId); attempt++ {
-						err := p.runnerProvisioner.ProvisionRunner(provisioningContext)
-						if provisioningContext.Err() != nil {
-							break
-						}
-
-						if err == nil {
-							break
-						}
-
-						p.logger.Errorf("unable to provision Orka runner for %s (attempt %d). More information: %s", p.runnerScaleSetName, attempt, err.Error())
-
-						select {
-						case <-provisioningContext.Done():
-							return
-						case <-time.After(15 * time.Second):
-						}
+					executor, commands, cleanup, provisioningErr := p.provisionRunnerWithRetry(jobContext, jobId)
+					if provisioningErr != nil {
+						p.logger.Errorf("unable to provision Orka runner for %s: %v", p.runnerScaleSetName, provisioningErr)
+						p.cancelJobContext(jobId, "provisioning failed")
+						return
 					}
+
+					defer func() {
+						var exitErr *ssh.ExitError
+
+						if executionErr != nil && !errors.As(executionErr, &exitErr) && !errors.Is(executionErr, context.Canceled) {
+							p.logger.Warnf("SSH connection dropped for JobId %s (%v). Skipping cleanup, relying on JobCompleted webhook.", jobId, executionErr)
+							return
+						}
+
+						var cancelReason string
+
+						if errors.Is(executionErr, context.Canceled) {
+							cancelReason = "job context was canceled"
+							p.logger.Infof("job context canceled for JobId %s. Cleaning up resources.", jobId)
+						} else if executionErr != nil {
+							cancelReason = fmt.Sprintf("execution failed with exit code %d", exitErr.ExitStatus())
+							p.logger.Errorf("execution failed with exit code %d for JobId %s. Cleaning up resources.", exitErr.ExitStatus(), jobId)
+						} else {
+							cancelReason = "execution completed successfully"
+							p.logger.Infof("execution completed successfully for JobId %s. Cleaning up resources.", jobId)
+						}
+
+						cleanup(executionErr)
+						p.cancelJobContext(jobId, cancelReason)
+					}()
+
+					executionErr = p.executeJobCommands(jobContext, jobId, executor, commands)
 				}()
 			}
 		case "JobStarted":
@@ -162,7 +181,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 
 			p.logger.Infof("Job completed message received for JobId: %s, RunnerRequestId: %d, RunnerId: %d, RunnerName: %s, with Result: %s", jobCompleted.JobId, jobCompleted.RunnerRequestId, jobCompleted.RunnerId, jobCompleted.RunnerName, jobCompleted.Result)
 
-			p.cancelProvisioningContext(jobCompleted.JobId)
+			p.cancelJobContext(jobCompleted.JobId, "Job completed webhook received")
 
 			if jobCompleted.JobId != "" && (jobCompleted.Result == cancelledStatus || jobCompleted.Result == ignoredStatus || jobCompleted.Result == abandonedStatus) {
 				p.setUpstreamCanceledJob(jobCompleted.JobId)
@@ -177,6 +196,52 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 		return fmt.Errorf("could not acquire jobs. %w", err)
 	}
 
+	return nil
+}
+
+func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, jobId string) (*orka.VMCommandExecutor, []string, func(error), error) {
+	for attempt := 1; !p.isUpstreamCanceled(jobId); attempt++ {
+		executor, commands, cleanup, err := p.runnerProvisioner.ProvisionRunner(ctx)
+		if ctx.Err() != nil {
+			return nil, nil, nil, ctx.Err()
+		}
+
+		if err == nil {
+			return executor, commands, cleanup, nil
+		}
+
+		p.logger.Errorf(
+			"unable to provision Orka runner for %s (attempt %d). More information: %v",
+			p.runnerScaleSetName,
+			attempt,
+			err,
+		)
+
+		select {
+		case <-ctx.Done():
+			return nil, nil, nil, nil
+		case <-time.After(15 * time.Second):
+		}
+	}
+
+	return nil, nil, nil, fmt.Errorf("unable to provision Orka runner for %s", p.runnerScaleSetName)
+}
+
+func (p *RunnerMessageProcessor) executeJobCommands(ctx context.Context, jobId string, executor *orka.VMCommandExecutor, commands []string) error {
+	p.logger.Infof("starting execution for JobId: %s on VM %s", jobId, executor.VMName)
+
+	err := executor.ExecuteCommands(ctx, commands...)
+
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	if err != nil && !errors.Is(ctx.Err(), context.Canceled) {
+		p.logger.Errorf("execution failed for JobId: %s on VM %s: %v", jobId, executor.VMName, err)
+		return err
+	}
+
+	p.logger.Infof("execution completed for JobId: %s on VM %s", jobId, executor.VMName)
 	return nil
 }
 
@@ -198,17 +263,21 @@ func (p *RunnerMessageProcessor) removeUpstreamCanceledJob(jobId string) {
 	delete(p.upstreamCanceledJobs, jobId)
 }
 
-func (p *RunnerMessageProcessor) storeProvisioningContextCancel(jobId string, cancel context.CancelFunc) {
-	p.provisioningContextCancelsMutex.Lock()
-	defer p.provisioningContextCancelsMutex.Unlock()
-	p.provisioningContextCancels[jobId] = cancel
+func (p *RunnerMessageProcessor) storeJobContextCancel(jobId string, cancel context.CancelFunc) {
+	p.jobContextCancelsMutex.Lock()
+	defer p.jobContextCancelsMutex.Unlock()
+	p.jobContextCancels[jobId] = cancel
 }
 
-func (p *RunnerMessageProcessor) cancelProvisioningContext(jobId string) {
-	p.provisioningContextCancelsMutex.Lock()
-	defer p.provisioningContextCancelsMutex.Unlock()
-	if cancel, exists := p.provisioningContextCancels[jobId]; exists {
+func (p *RunnerMessageProcessor) cancelJobContext(jobId string, reason string) {
+	p.jobContextCancelsMutex.Lock()
+	defer p.jobContextCancelsMutex.Unlock()
+
+	if cancel, exists := p.jobContextCancels[jobId]; exists {
+		p.logger.Infof("canceling job context for JobId: %s. Triggered by: %s", jobId, reason)
 		cancel()
-		delete(p.provisioningContextCancels, jobId)
+		delete(p.jobContextCancels, jobId)
+	} else {
+		p.logger.Debugf("job context for JobId: %s already canceled or not found. Triggered by: %s", jobId, reason)
 	}
 }
