@@ -53,12 +53,7 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) error {
 	runnerName := vmResponse.Name
 	p.logger.Infof("deployed Orka VM with name %s", runnerName)
 
-	defer func() {
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
-		defer cancel()
-
-		p.deleteVM(cleanupCtx, runnerName)
-	}()
+	defer p.cleanupResources(context.WithoutCancel(ctx), runnerName)
 
 	vmIP, err := p.getRealVMIP(vmResponse.IP)
 	if err != nil {
@@ -100,6 +95,25 @@ func (p *RunnerProvisioner) getRealVMIP(vmIP string) (string, error) {
 	return p.envData.OrkaNodeIPMapping[vmIP], nil
 }
 
+func (p *RunnerProvisioner) cleanupResources(ctx context.Context, runnerName string) {
+	for {
+		err := p.ensureRunnerDeregistered(ctx, runnerName)
+		if err != nil {
+			if strings.Contains(err.Error(), "is currently running a job and cannot be deleted") {
+				p.logger.Infof("runner %s is currently running a job, repeating deletion logic", runnerName)
+				continue
+			}
+
+			p.logger.Errorf("failed to delete runner %s (timeout or other error: %v). VM will not be deleted.", runnerName, err)
+			return
+		}
+
+		break
+	}
+
+	p.deleteVM(ctx, runnerName)
+}
+
 func (p *RunnerProvisioner) deleteVM(ctx context.Context, runnerName string) {
 	p.logger.Infof("deleting Orka VM with name %s", runnerName)
 	operation := func() error {
@@ -116,11 +130,9 @@ func (p *RunnerProvisioner) deleteVM(ctx context.Context, runnerName string) {
 	} else {
 		p.logger.Infof("deleted Orka VM with name %s", runnerName)
 	}
-
-	p.ensureRunnerDeregistered(ctx, runnerName)
 }
 
-func (p *RunnerProvisioner) ensureRunnerDeregistered(ctx context.Context, runnerName string) {
+func (p *RunnerProvisioner) ensureRunnerDeregistered(ctx context.Context, runnerName string) error {
 	p.logger.Infof("waiting for runner %s to de-register from GitHub", runnerName)
 
 	timeoutCtx, cancel := context.WithTimeout(ctx, p.envData.RunnerDeregistrationTimeout)
@@ -131,16 +143,18 @@ func (p *RunnerProvisioner) ensureRunnerDeregistered(ctx context.Context, runner
 
 	if runner, err := p.actionsClient.GetRunner(ctx, runnerName); err == nil && runner == nil {
 		p.logger.Infof("runner %s has de-registered from GitHub", runnerName)
-		return
+		return nil
 	}
 
 	for {
 		select {
+		case <-ctx.Done():
+			return ctx.Err()
+
 		case <-timeoutCtx.Done():
 			p.logger.Warnf("runner %s did not de-register within %v, force-deleting from GitHub",
 				runnerName, p.envData.RunnerDeregistrationTimeout)
-			p.forceDeleteRunner(ctx, runnerName)
-			return
+			return p.forceDeleteRunner(ctx, runnerName)
 
 		case <-ticker.C:
 			runner, err := p.actionsClient.GetRunner(ctx, runnerName)
@@ -151,31 +165,32 @@ func (p *RunnerProvisioner) ensureRunnerDeregistered(ctx context.Context, runner
 
 			if runner == nil {
 				p.logger.Infof("runner %s has de-registered from GitHub", runnerName)
-				return
+				return nil
 			}
 		}
 	}
 }
 
-func (p *RunnerProvisioner) forceDeleteRunner(ctx context.Context, runnerName string) {
+func (p *RunnerProvisioner) forceDeleteRunner(ctx context.Context, runnerName string) error {
 	runner, err := p.actionsClient.GetRunner(ctx, runnerName)
 	if err != nil {
 		p.logger.Errorf("error getting runner %s for force-deletion: %s", runnerName, err.Error())
-		return
+		return err
 	}
 
 	if runner == nil {
 		p.logger.Infof("runner %s already de-registered, no force-deletion needed", runnerName)
-		return
+		return nil
 	}
 
 	err = p.actionsClient.DeleteRunner(ctx, runner.Id)
 	if err != nil {
 		p.logger.Errorf("error force-deleting runner %s (ID: %d) from GitHub: %s", runnerName, runner.Id, err.Error())
-		return
+		return err
 	}
 
 	p.logger.Infof("successfully force-deleted runner %s (ID: %d) from GitHub", runnerName, runner.Id)
+	return nil
 }
 
 func (p *RunnerProvisioner) createRunner(ctx context.Context, runnerName string) (*types.RunnerScaleSetJitRunnerConfig, error) {
