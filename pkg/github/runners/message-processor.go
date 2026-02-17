@@ -147,7 +147,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 					defer func() {
 						var exitErr *ssh.ExitError
 
-						if executionErr != nil && !errors.As(executionErr, &exitErr) && !errors.Is(executionErr, context.Canceled) {
+						if isNetworkingFailure(executionErr) {
 							p.logger.Warnf("SSH connection dropped for JobId %s (%v). Skipping cleanup, relying on JobCompleted webhook.", jobId, executionErr)
 							return
 						}
@@ -284,4 +284,13 @@ func (p *RunnerMessageProcessor) cancelJobContext(jobId string, reason string) {
 	} else {
 		p.logger.Debugf("job context for JobId: %s already canceled or not found. Triggered by: %s", jobId, reason)
 	}
+}
+
+func isNetworkingFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+
+	var exitErr *ssh.ExitError
+	return !errors.As(err, &exitErr) && !errors.Is(err, context.Canceled)
 }
