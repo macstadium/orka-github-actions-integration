@@ -43,43 +43,39 @@ var commands_template = []string{
 	"echo 'Git Action Runner exited'",
 }
 
-func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) (err error) {
+func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) (*orka.VMCommandExecutor, []string, func(error), error) {
 	p.logger.Infof("deploying Orka VM with prefix %s", p.runnerScaleSet.Name)
 	vmResponse, err := p.orkaClient.DeployVM(ctx, p.runnerScaleSet.Name, p.envData.OrkaVMConfig)
 	if err != nil {
 		p.logger.Errorf("failed to deploy Orka VM: %v", err)
-		return err
+		return nil, nil, nil, err
 	}
 
 	runnerName := vmResponse.Name
 	p.logger.Infof("deployed Orka VM with name %s", runnerName)
 
+	provisioningSucceeded := false
+
 	defer func() {
-		if err != nil {
-			if ctx.Err() != nil {
-				p.logger.Warnf("context cancelled/timed out, triggering cleanup for %s", runnerName)
-			} else {
-				p.logger.Errorf("provisioning failed with error, triggering cleanup for %s: %v", runnerName, err)
-			}
-		} else {
-			p.logger.Infof("provisioning and execution completed normally, triggering cleanup for %s", runnerName)
+		if !provisioningSucceeded {
+			p.logger.Warnf("provisioning failed, cleaning up resources for VM %s", runnerName)
+			p.cleanupResources(context.WithoutCancel(ctx), runnerName)
 		}
-		p.cleanupResources(context.WithoutCancel(ctx), runnerName)
 	}()
 
 	vmIP, err := p.getRealVMIP(vmResponse.IP)
 	if err != nil {
 		p.logger.Errorf("failed to get real VM IP for %s: %v", runnerName, err)
-		return err
+		return nil, nil, nil, err
 	}
 
-	p.logger.Infof("creating runner with name %s", runnerName)
+	p.logger.Infof("creating runner config for name %s", runnerName)
 	jitConfig, err := p.createRunner(ctx, runnerName)
 	if err != nil {
 		p.logger.Errorf("failed to create runner config for %s: %v", runnerName, err)
-		return err
+		return nil, nil, nil, err
 	}
-	p.logger.Infof("created runner with name %s", runnerName)
+	p.logger.Infof("created runner config with name %s", runnerName)
 
 	vmCommandExecutor := &orka.VMCommandExecutor{
 		VMIP:       vmIP,
@@ -90,13 +86,24 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) (err error) {
 		Logger:     p.logger,
 	}
 
-	p.logger.Infof("starting command execution on VM %s", runnerName)
-	err = vmCommandExecutor.ExecuteCommands(ctx, buildCommands(jitConfig.EncodedJITConfig, p.envData.GitHubRunnerVersion, p.envData.OrkaVMUsername)...)
-	if err != nil {
-		return err
+	commands := buildCommands(jitConfig.EncodedJITConfig, p.envData.GitHubRunnerVersion, p.envData.OrkaVMUsername)
+
+	cleanup := func(execErr error) {
+		if execErr != nil {
+			if ctx.Err() != nil {
+				p.logger.Warnf("context cancelled/timed out, triggering cleanup for %s", runnerName)
+			} else {
+				p.logger.Errorf("execution failed, triggering cleanup for %s: %v", runnerName, execErr)
+			}
+		} else {
+			p.logger.Infof("execution completed normally, triggering cleanup for %s", runnerName)
+		}
+		p.cleanupResources(context.WithoutCancel(ctx), runnerName)
 	}
 
-	return nil
+	provisioningSucceeded = true
+
+	return vmCommandExecutor, commands, cleanup, nil
 }
 
 func (p *RunnerProvisioner) getRealVMIP(vmIP string) (string, error) {

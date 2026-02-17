@@ -3,6 +3,7 @@ package orka
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -108,10 +109,17 @@ func (executor *VMCommandExecutor) ExecuteCommands(ctx context.Context, commands
 		return ctx.Err()
 	case err := <-done:
 		if err != nil {
-			executor.Logger.Errorf("Execution finished with error on VM %s: %v", executor.VMName, err)
+			var exitErr *ssh.ExitError
+
+			if errors.As(err, &exitErr) {
+				executor.Logger.Errorf("Command execution failed on VM %s with exit code %d: %v", executor.VMName, exitErr.ExitStatus(), err)
+			} else {
+				executor.Logger.Errorf("SSH connection dropped or protocol error on VM %s: %v", executor.VMName, err)
+			}
 		} else {
 			executor.Logger.Infof("Execution completed successfully on VM %s", executor.VMName)
 		}
+
 		return err
 	}
 }

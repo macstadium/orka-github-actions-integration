@@ -11,6 +11,7 @@ import (
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/actions"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/messagequeue"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
+	"github.com/macstadium/orka-github-actions-integration/pkg/orka"
 	"go.uber.org/zap"
 )
 
@@ -31,17 +32,17 @@ type RunnerManager struct {
 }
 
 type RunnerProvisionerInterface interface {
-	ProvisionRunner(ctx context.Context) error
+	ProvisionRunner(ctx context.Context) (*orka.VMCommandExecutor, []string, func(error), error)
 }
 
 type RunnerMessageProcessor struct {
-	ctx                             context.Context
-	logger                          *zap.SugaredLogger
-	runnerManager                   RunnerManagerInterface
-	runnerProvisioner               RunnerProvisionerInterface
-	runnerScaleSetName              string
-	upstreamCanceledJobs            map[string]bool
-	upstreamCanceledJobsMutex       sync.RWMutex
-	provisioningContextCancels      map[string]context.CancelFunc
-	provisioningContextCancelsMutex sync.Mutex
+	ctx                       context.Context
+	logger                    *zap.SugaredLogger
+	runnerManager             RunnerManagerInterface
+	runnerProvisioner         RunnerProvisionerInterface
+	runnerScaleSetName        string
+	upstreamCanceledJobs      map[string]bool
+	upstreamCanceledJobsMutex sync.RWMutex
+	jobContextCancels         map[string]context.CancelFunc
+	jobContextCancelsMutex    sync.Mutex
 }
