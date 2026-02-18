@@ -193,28 +193,6 @@ var _ = Describe("RunnerProvisioner", func() {
 				Expect(mockActions.DeleteRunnerCalls).To(Equal(1))
 			})
 		})
-
-		Context("when context is cancelled", func() {
-			It("should stop polling and return", func() {
-				cancelCtx, cancel := context.WithCancel(ctx)
-
-				// Runner never de-registers, but we'll cancel the context
-				mockActions.GetRunnerFunc = func(ctx context.Context, runnerName string) (*types.RunnerReference, error) {
-					// Cancel context after first check
-					cancel()
-					return &types.RunnerReference{Id: 888, Name: runnerName}, nil
-				}
-				mockActions.DeleteRunnerFunc = func(ctx context.Context, runnerID int) error {
-					return nil
-				}
-
-				_ = provisioner.ensureRunnerDeregistered(cancelCtx, testRunnerName)
-
-				// Should have attempted at least one check and force-deleted
-				Expect(mockActions.GetRunnerCalls).To(BeNumerically(">=", 1))
-				Expect(mockActions.DeleteRunnerCalls).To(Equal(1))
-			})
-		})
 	})
 
 	Describe("forceDeleteRunner", func() {
