@@ -41,6 +41,7 @@ type RunnerMessageProcessor struct {
 	logger                    *zap.SugaredLogger
 	runnerManager             RunnerManagerInterface
 	runnerProvisioner         RunnerProvisionerInterface
+	vmTracker                 *VMTracker
 	runnerScaleSetName        string
 	upstreamCanceledJobs      map[string]bool
 	upstreamCanceledJobsMutex sync.RWMutex
