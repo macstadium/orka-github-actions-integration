@@ -135,7 +135,17 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 
 					executor, commands, provisioningErr := p.provisionRunnerWithRetry(jobContext, jobId)
 					if provisioningErr != nil {
-						p.logger.Errorf("unable to provision Orka runner for %s: %v", p.runnerScaleSetName, provisioningErr)
+						if errors.Is(provisioningErr, context.Canceled) {
+							p.logger.Infof("provisioning canceled for %s", p.runnerScaleSetName)
+						} else {
+							p.logger.Errorf("unable to provision Orka runner for %s: %v", p.runnerScaleSetName, provisioningErr)
+						}
+						p.cancelJobContext(jobId, "provisioning failed")
+						return
+					}
+
+					if executor == nil {
+						p.logger.Errorf("provisioning returned nil executor for %s", p.runnerScaleSetName)
 						p.cancelJobContext(jobId, "provisioning failed")
 						return
 					}
@@ -147,21 +157,25 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 					})
 
 					defer func() {
-						var exitErr *ssh.ExitError
-
 						if isNetworkingFailure(executionErr) {
 							p.logger.Warnf("SSH connection dropped for JobId %s (%v). Skipping cleanup, relying on JobCompleted webhook.", jobId, executionErr)
 							return
 						}
 
 						var cancelReason string
+						var exitErr *ssh.ExitError
 
 						if errors.Is(executionErr, context.Canceled) {
 							cancelReason = "job context was canceled"
 							p.logger.Infof("job context canceled for JobId %s. Cleaning up resources.", jobId)
 						} else if executionErr != nil {
-							cancelReason = fmt.Sprintf("execution failed with exit code %d", exitErr.ExitStatus())
-							p.logger.Errorf("execution failed with exit code %d for JobId %s. Cleaning up resources.", exitErr.ExitStatus(), jobId)
+							if errors.As(executionErr, &exitErr) {
+								cancelReason = fmt.Sprintf("execution failed with exit code %d", exitErr.ExitStatus())
+								p.logger.Errorf("execution failed with exit code %d for JobId %s. Cleaning up resources.", exitErr.ExitStatus(), jobId)
+							} else {
+								cancelReason = fmt.Sprintf("execution failed: %v", executionErr)
+								p.logger.Errorf("execution failed for JobId %s. Cleaning up resources: %v", jobId, executionErr)
+							}
 						} else {
 							cancelReason = "execution completed successfully"
 							p.logger.Infof("execution completed successfully for JobId %s. Cleaning up resources.", jobId)
@@ -226,7 +240,7 @@ func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, j
 
 		select {
 		case <-ctx.Done():
-			return nil, nil, nil
+			return nil, nil, ctx.Err()
 		case <-time.After(15 * time.Second):
 		}
 	}
