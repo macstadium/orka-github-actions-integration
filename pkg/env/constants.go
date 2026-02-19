@@ -27,5 +27,7 @@ const (
 	RunnerDeregistrationTimeoutEnvName      = "RUNNER_DEREGISTRATION_TIMEOUT"
 	RunnerDeregistrationPollIntervalEnvName = "RUNNER_DEREGISTRATION_POLL_INTERVAL"
 
+	VMTrackerIntervalEnvName = "VM_TRACKER_INTERVAL"
+
 	LogLevelEnvName = "LOG_LEVEL"
 )

@@ -26,7 +26,7 @@ const (
 	defaultJobId    = "missing-job-id"
 )
 
-func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerInterface, runnerProvisioner RunnerProvisionerInterface, runnerScaleSet *types.RunnerScaleSet) *RunnerMessageProcessor {
+func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerInterface, runnerProvisioner RunnerProvisionerInterface, vmTracker *VMTracker, runnerScaleSet *types.RunnerScaleSet) *RunnerMessageProcessor {
 	return &RunnerMessageProcessor{
 		ctx:                       ctx,
 		runnerManager:             runnerManager,
@@ -37,6 +37,7 @@ func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerI
 		upstreamCanceledJobsMutex: sync.RWMutex{},
 		jobContextCancels:         map[string]context.CancelFunc{},
 		jobContextCancelsMutex:    sync.Mutex{},
+		vmTracker:                 vmTracker,
 	}
 }
 
@@ -142,6 +143,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 					context.AfterFunc(jobContext, func() {
 						p.logger.Infof("cleaning up resources for %s after job context is canceled", executor.VMName)
 						p.runnerProvisioner.CleanupResources(context.WithoutCancel(p.ctx), executor.VMName)
+						p.vmTracker.Untrack(executor.VMName)
 					})
 
 					defer func() {
@@ -168,6 +170,7 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 						p.cancelJobContext(jobId, cancelReason)
 					}()
 
+					p.vmTracker.Track(executor.VMName)
 					executionErr = p.executeJobCommands(jobContext, jobId, executor, commands)
 				}()
 			}
