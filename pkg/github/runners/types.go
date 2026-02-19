@@ -45,6 +45,6 @@ type RunnerMessageProcessor struct {
 	runnerScaleSetName        string
 	upstreamCanceledJobs      map[string]bool
 	upstreamCanceledJobsMutex sync.RWMutex
-	jobContextCancels         map[string]context.CancelFunc
-	jobContextCancelsMutex    sync.Mutex
+	runnerContextCancels      map[string]context.CancelFunc
+	runnerContextCancelsMutex sync.Mutex
 }
