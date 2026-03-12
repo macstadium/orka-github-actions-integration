@@ -43,7 +43,7 @@ type RunnerMessageProcessor struct {
 	runnerProvisioner         RunnerProvisionerInterface
 	vmTracker                 *VMTracker
 	runnerScaleSetName        string
-	upstreamCanceledJobs      map[string]bool
+	upstreamCanceledJobs      map[jobIdentity]bool
 	upstreamCanceledJobsMutex sync.RWMutex
 	runnerContextCancels      map[string]context.CancelFunc
 	runnerContextCancelsMutex sync.Mutex
