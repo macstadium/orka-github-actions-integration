@@ -70,7 +70,7 @@ func NewOrkaClient(envData *env.Data, ctx context.Context) (*OrkaClient, error) 
 
 	// The purpose of this call is to check the permissions of the provided token.
 	// If the command fails with an "Unauthorized" error, it indicates that the provided token is not valid.
-	_, err = exec.ExecStringCommand("orka3", []string{"node", "list"})
+	_, err = exec.ExecStringCommand("orka3", []string{"node", "list", "--namespace", envData.OrkaNamespace})
 	if err != nil {
 		if strings.Contains(err.Error(), "Unauthorized") {
 			return nil, fmt.Errorf("the provided token is not valid. Please provide a valid token")
