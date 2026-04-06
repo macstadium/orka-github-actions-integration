@@ -30,4 +30,9 @@ const (
 	VMTrackerIntervalEnvName = "VM_TRACKER_INTERVAL"
 
 	LogLevelEnvName = "LOG_LEVEL"
+
+	// Prometheus metrics
+	EnableMetricsEnvName       = "ENABLE_METRICS"
+	MetricsAddrEnvName         = "METRICS_ADDR"
+	MetricsPollIntervalEnvName = "METRICS_POLL_INTERVAL"
 )
