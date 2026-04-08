@@ -3,11 +3,9 @@ package main
 import (
 	"context"
 	"fmt"
-	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/constants"
 	"github.com/macstadium/orka-github-actions-integration/pkg/env"
@@ -16,87 +14,14 @@ import (
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/runners"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
+	"github.com/macstadium/orka-github-actions-integration/pkg/metrics"
 	"github.com/macstadium/orka-github-actions-integration/pkg/orka"
 	provisioner "github.com/macstadium/orka-github-actions-integration/pkg/runner-provisioner"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/util/validation"
 )
 
 var runnerScaleSetIDs = []int{}
-
-type Metrics struct {
-	totalAvailableJobs     *prometheus.GaugeVec
-	totalAcquiredJobs      *prometheus.GaugeVec
-	totalAssignedJobs      *prometheus.GaugeVec
-	totalRunningJobs       *prometheus.GaugeVec
-	totalRegisteredRunners *prometheus.GaugeVec
-	totalBusyRunners       *prometheus.GaugeVec
-	totalIdleRunners       *prometheus.GaugeVec
-}
-
-func newMetricsRegistry() (*prometheus.Registry, *Metrics) {
-	registry := prometheus.NewRegistry()
-
-	m := &Metrics{
-		totalAvailableJobs: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "runner_scale_set_total_available_jobs",
-			Help: "Total number of available jobs",
-		}, []string{"runner_name"}),
-		totalAcquiredJobs: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "runner_scale_set_total_acquired_jobs",
-			Help: "Total number of acquired jobs",
-		}, []string{"runner_name"}),
-		totalAssignedJobs: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "runner_scale_set_total_assigned_jobs",
-			Help: "Total number of assigned jobs",
-		}, []string{"runner_name"}),
-		totalRunningJobs: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "runner_scale_set_total_running_jobs",
-			Help: "Total number of running jobs",
-		}, []string{"runner_name"}),
-		totalRegisteredRunners: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "runner_scale_set_total_registered_runners",
-			Help: "Total number of registered runners",
-		}, []string{"runner_name"}),
-		totalBusyRunners: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "runner_scale_set_total_busy_runners",
-			Help: "Total number of busy runners",
-		}, []string{"runner_name"}),
-		totalIdleRunners: prometheus.NewGaugeVec(prometheus.GaugeOpts{
-			Name: "runner_scale_set_total_idle_runners",
-			Help: "Total number of idle runners",
-		}, []string{"runner_name"}),
-	}
-
-	registry.MustRegister(
-		m.totalAvailableJobs,
-		m.totalAcquiredJobs,
-		m.totalAssignedJobs,
-		m.totalRunningJobs,
-		m.totalRegisteredRunners,
-		m.totalBusyRunners,
-		m.totalIdleRunners,
-	)
-
-	return registry, m
-}
-
-// Function to update metrics
-func updateMetrics(m *Metrics, runnerName string, stats *types.RunnerScaleSetStatistic) {
-	if m == nil || stats == nil {
-		return
-	}
-
-	m.totalAvailableJobs.WithLabelValues(runnerName).Set(float64(stats.TotalAvailableJobs))
-	m.totalAcquiredJobs.WithLabelValues(runnerName).Set(float64(stats.TotalAcquiredJobs))
-	m.totalAssignedJobs.WithLabelValues(runnerName).Set(float64(stats.TotalAssignedJobs))
-	m.totalRunningJobs.WithLabelValues(runnerName).Set(float64(stats.TotalRunningJobs))
-	m.totalRegisteredRunners.WithLabelValues(runnerName).Set(float64(stats.TotalRegisteredRunners))
-	m.totalBusyRunners.WithLabelValues(runnerName).Set(float64(stats.TotalBusyRunners))
-	m.totalIdleRunners.WithLabelValues(runnerName).Set(float64(stats.TotalIdleRunners))
-}
 
 func main() {
 	envData := env.ParseEnv()
@@ -125,25 +50,6 @@ func main() {
 	actionsClient, err := actions.NewActionsClient(ctx, envData, config)
 	if err != nil {
 		panic(err)
-	}
-
-	// Start Prometheus metrics server
-	var metrics *Metrics
-
-	if envData.EnableMetrics {
-		registry, m := newMetricsRegistry()
-		metrics = m
-
-		go func() {
-			mux := http.NewServeMux()
-			mux.Handle("/metrics", promhttp.HandlerFor(registry, promhttp.HandlerOpts{}))
-
-			fmt.Printf("Prometheus metrics available at %s/metrics\n", envData.MetricsAddr)
-
-			if err := http.ListenAndServe(envData.MetricsAddr, mux); err != nil {
-				logger.Fatalf("metrics server failed: %v", err)
-			}
-		}()
 	}
 
 	go func() {
@@ -185,32 +91,7 @@ func main() {
 	runnerScaleSetIDs = append(runnerScaleSetIDs, runnerScaleSet.Id)
 
 	if envData.EnableMetrics {
-		go func() {
-			ticker := time.NewTicker(envData.MetricsPollInterval)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-ctx.Done():
-					logger.Info("metrics poller shutting down")
-					return
-
-				case <-ticker.C:
-					scaleSet, err := actionsClient.GetRunnerScaleSet(ctx, groupId, runnerName)
-					if err != nil {
-						logger.Errorf("failed to fetch runner scale set stats: %v", err)
-						continue
-					}
-
-					if scaleSet == nil {
-						logger.Warn("runner scale set is nil")
-						continue
-					}
-
-					updateMetrics(metrics, runnerName, scaleSet.Statistics)
-				}
-			}
-		}()
+		metrics.Start(ctx, logger, envData, actionsClient, runnerName, groupId)
 	}
 
 	orkaClient, err := orka.NewOrkaClient(envData, ctx)
