@@ -51,6 +51,10 @@ type Data struct {
 	VMTrackerInterval time.Duration
 
 	LogLevel string
+
+	EnableMetrics       bool
+	MetricsAddr         string
+	MetricsPollInterval time.Duration
 }
 
 func ParseEnv() *Data {
@@ -82,6 +86,10 @@ func ParseEnv() *Data {
 		VMTrackerInterval: getDurationEnv(VMTrackerIntervalEnvName, 300*time.Second),
 
 		LogLevel: getEnvWithDefault(LogLevelEnvName, logging.LogLevelInfo),
+
+		EnableMetrics:       getBoolEnv(EnableMetricsEnvName, false),
+		MetricsAddr:         getEnvWithDefault(MetricsAddrEnvName, ":8080"),
+		MetricsPollInterval: getDurationEnv(MetricsPollIntervalEnvName, 30*time.Second),
 	}
 
 	envData.OrkaURL = strings.TrimSuffix(envData.OrkaURL, "/")

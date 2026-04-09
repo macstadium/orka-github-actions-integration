@@ -14,6 +14,7 @@ import (
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/runners"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
+	"github.com/macstadium/orka-github-actions-integration/pkg/metrics"
 	"github.com/macstadium/orka-github-actions-integration/pkg/orka"
 	provisioner "github.com/macstadium/orka-github-actions-integration/pkg/runner-provisioner"
 	"go.uber.org/zap"
@@ -51,18 +52,6 @@ func main() {
 		panic(err)
 	}
 
-	runnerScaleSet, err := actionsClient.GetRunnerScaleSet(ctx, groupId, runnerName)
-	if err != nil {
-		panic(err)
-	}
-
-	if runnerScaleSet != nil {
-		err = actionsClient.DeleteRunnerScaleSet(ctx, runnerScaleSet.Id)
-		if err != nil {
-			panic(err)
-		}
-	}
-
 	go func() {
 		// Wait for termination signal
 		<-ctx.Done()
@@ -81,7 +70,7 @@ func main() {
 		}
 	}()
 
-	runnerScaleSet, err = actionsClient.CreateRunnerScaleSet(ctx, &types.RunnerScaleSet{
+	runnerScaleSet, err := actionsClient.CreateRunnerScaleSet(ctx, &types.RunnerScaleSet{
 		Name:          runnerName,
 		RunnerGroupId: groupId,
 		Labels: []types.RunnerScaleSetLabel{
@@ -100,6 +89,10 @@ func main() {
 	}
 
 	runnerScaleSetIDs = append(runnerScaleSetIDs, runnerScaleSet.Id)
+
+	if envData.EnableMetrics {
+		metrics.Start(ctx, logger, envData, actionsClient, runnerName, groupId)
+	}
 
 	orkaClient, err := orka.NewOrkaClient(envData, ctx)
 	if err != nil {
