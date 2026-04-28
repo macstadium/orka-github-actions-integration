@@ -70,22 +70,32 @@ func main() {
 		}
 	}()
 
-	runnerScaleSet, err := actionsClient.CreateRunnerScaleSet(ctx, &types.RunnerScaleSet{
-		Name:          runnerName,
-		RunnerGroupId: groupId,
-		Labels: []types.RunnerScaleSetLabel{
-			{
-				Name: runnerName,
-				Type: "System",
-			},
-		},
-		RunnerSetting: types.RunnerScaleSetSetting{
-			Ephemeral:     true,
-			DisableUpdate: true,
-		},
-	})
+	runnerScaleSet, err := actionsClient.GetRunnerScaleSet(ctx, groupId, runnerName)
 	if err != nil {
-		panic(fmt.Sprintf("unable to create runner %s, err: %s", runnerName, err.Error()))
+		panic(fmt.Sprintf("unable to look up runner scale set %s, err: %s", runnerName, err.Error()))
+	}
+
+	if runnerScaleSet != nil {
+		logger.Infof("found existing runner scale set %s (id: %d), re-using it", runnerName, runnerScaleSet.Id)
+	} else {
+		logger.Infof("no existing runner scale set found for %s, creating a new one", runnerName)
+		runnerScaleSet, err = actionsClient.CreateRunnerScaleSet(ctx, &types.RunnerScaleSet{
+			Name:          runnerName,
+			RunnerGroupId: groupId,
+			Labels: []types.RunnerScaleSetLabel{
+				{
+					Name: runnerName,
+					Type: "System",
+				},
+			},
+			RunnerSetting: types.RunnerScaleSetSetting{
+				Ephemeral:     true,
+				DisableUpdate: true,
+			},
+		})
+		if err != nil {
+			panic(fmt.Sprintf("unable to create runner %s, err: %s", runnerName, err.Error()))
+		}
 	}
 
 	runnerScaleSetIDs = append(runnerScaleSetIDs, runnerScaleSet.Id)
