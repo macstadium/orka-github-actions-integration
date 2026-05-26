@@ -13,12 +13,22 @@ import (
 )
 
 type OrkaService interface {
+	ListVMs(ctx context.Context) ([]OrkaVMDeployResponseModel, error)
 	DeployVM(ctx context.Context, namePrefix, vmConfig string) (*OrkaVMDeployResponseModel, error)
 	DeleteVM(ctx context.Context, name string) error
 }
 
 type OrkaClient struct {
 	envData *env.Data
+}
+
+func (client *OrkaClient) ListVMs(ctx context.Context) ([]OrkaVMDeployResponseModel, error) {
+	res, err := exec.ExecJSONCommand[[]OrkaVMDeployResponseModel]("orka3", []string{"vm", "list", "--namespace", client.envData.OrkaNamespace, "-o", "json"})
+	if err != nil {
+		return nil, err
+	}
+
+	return *res, nil
 }
 
 func (client *OrkaClient) DeployVM(ctx context.Context, namePrefix, vmConfig string) (*OrkaVMDeployResponseModel, error) {

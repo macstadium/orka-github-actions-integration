@@ -43,7 +43,30 @@ func (tracker *VMTracker) Untrack(vmName string) {
 	delete(tracker.trackedVMs, vmName)
 }
 
-func (tracker *VMTracker) Start(ctx context.Context, interval time.Duration) {
+func (tracker *VMTracker) seedFromOrka(ctx context.Context, runnerScaleSetName string) {
+	tracker.logger.Infof("Seeding VM tracker from Orka for scale set prefix %q", runnerScaleSetName)
+
+	vms, err := tracker.orkaClient.ListVMs(ctx)
+	if err != nil {
+		tracker.logger.Errorf("Failed to list VMs during seeding: %v", err)
+		return
+	}
+
+	var matched int
+	for _, vm := range vms {
+		if !strings.HasPrefix(vm.Name, runnerScaleSetName) {
+			continue
+		}
+		matched++
+		tracker.Track(vm.Name)
+	}
+
+	tracker.logger.Infof("Seeded %d VMs matching prefix %q out of %d total", matched, runnerScaleSetName, len(vms))
+}
+
+func (tracker *VMTracker) Start(ctx context.Context, interval time.Duration, runnerScaleSetName string) {
+	tracker.seedFromOrka(ctx, runnerScaleSetName)
+
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 

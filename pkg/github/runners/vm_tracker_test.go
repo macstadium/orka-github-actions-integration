@@ -19,8 +19,16 @@ func TestVMTracker(t *testing.T) {
 }
 
 type MockOrkaClient struct {
+	ListVMsFunc  func(ctx context.Context) ([]orka.OrkaVMDeployResponseModel, error)
 	DeleteVMFunc func(ctx context.Context, name string) error
 	DeployVMFunc func(ctx context.Context, namePrefix, vmConfig string) (*orka.OrkaVMDeployResponseModel, error)
+}
+
+func (m *MockOrkaClient) ListVMs(ctx context.Context) ([]orka.OrkaVMDeployResponseModel, error) {
+	if m.ListVMsFunc != nil {
+		return m.ListVMsFunc(ctx)
+	}
+	return nil, nil
 }
 
 func (m *MockOrkaClient) DeleteVM(ctx context.Context, name string) error {
@@ -207,6 +215,64 @@ var _ = Describe("VMTracker", func() {
 				strikes := tracker.trackedVMs[vmName]
 				Expect(strikes).To(Equal(0), "Strikes should not increase on API errors")
 			})
+		})
+	})
+
+	Describe("seedFromOrka", func() {
+		const scaleSetName = "my-runner"
+
+		It("should track VMs with matching prefix", func() {
+			mockOrka.ListVMsFunc = func(ctx context.Context) ([]orka.OrkaVMDeployResponseModel, error) {
+				return []orka.OrkaVMDeployResponseModel{
+					{Name: "my-runner-abc12", Status: orka.VMRunning},
+					{Name: "my-runner-xyz99", Status: orka.VMRunning},
+				}, nil
+			}
+
+			tracker.seedFromOrka(ctx, scaleSetName)
+
+			Expect(tracker.trackedVMs).To(HaveLen(2))
+			Expect(tracker.trackedVMs).To(HaveKey("my-runner-abc12"))
+			Expect(tracker.trackedVMs).To(HaveKey("my-runner-xyz99"))
+		})
+
+		It("should ignore VMs that do not match the scale set name prefix", func() {
+			mockOrka.ListVMsFunc = func(ctx context.Context) ([]orka.OrkaVMDeployResponseModel, error) {
+				return []orka.OrkaVMDeployResponseModel{
+					{Name: "other-service-vm1", Status: orka.VMRunning},
+				}, nil
+			}
+
+			tracker.seedFromOrka(ctx, scaleSetName)
+
+			Expect(tracker.trackedVMs).To(BeEmpty())
+		})
+
+		It("should only track VMs with matching prefix in a mixed list", func() {
+			mockOrka.ListVMsFunc = func(ctx context.Context) ([]orka.OrkaVMDeployResponseModel, error) {
+				return []orka.OrkaVMDeployResponseModel{
+					{Name: "my-runner-abc12", Status: orka.VMRunning},
+					{Name: "unrelated-vm", Status: orka.VMRunning},
+					{Name: "my-runner-xyz99", Status: orka.VMPending},
+				}, nil
+			}
+
+			tracker.seedFromOrka(ctx, scaleSetName)
+
+			Expect(tracker.trackedVMs).To(HaveLen(2))
+			Expect(tracker.trackedVMs).To(HaveKey("my-runner-abc12"))
+			Expect(tracker.trackedVMs).To(HaveKey("my-runner-xyz99"))
+			Expect(tracker.trackedVMs).NotTo(HaveKey("unrelated-vm"))
+		})
+
+		It("should handle ListVMs errors gracefully", func() {
+			mockOrka.ListVMsFunc = func(ctx context.Context) ([]orka.OrkaVMDeployResponseModel, error) {
+				return nil, errors.New("connection refused")
+			}
+
+			tracker.seedFromOrka(ctx, scaleSetName)
+
+			Expect(tracker.trackedVMs).To(BeEmpty())
 		})
 	})
 })
