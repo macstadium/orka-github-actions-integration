@@ -17,7 +17,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/actions"
-	ghErrors "github.com/macstadium/orka-github-actions-integration/pkg/github/errors"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/messagequeue"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
@@ -27,6 +26,8 @@ const (
 	sessionCreationMaxRetryCount  = 10
 	runnerScaleSetJobMessagesType = "RunnerScaleSetJobMessages"
 )
+
+var ErrActiveSession = errors.New("runner scale set already has an active session")
 
 func NewRunnerManager(ctx context.Context, client actions.ActionsService, runnerScaleSetId int) (*RunnerManager, error) {
 	logger := logging.Logger.Named(fmt.Sprintf("runner-manager-%d", runnerScaleSetId))
@@ -69,9 +70,12 @@ func createSessionWithRetry(ctx context.Context, logger *zap.SugaredLogger, clie
 			break
 		}
 
-		clientSideError := &ghErrors.HttpClientSideError{}
-		if errors.As(err, &clientSideError) && clientSideError.Code != http.StatusConflict {
-			logger.Info("unable to create message session. The error indicates something is wrong on the client side, won't make any retry.")
+		actionsErr := &actions.ActionsError{}
+		if errors.As(err, &actionsErr) {
+			if actionsErr.StatusCode == http.StatusConflict {
+				return nil, fmt.Errorf("%w: %s", ErrActiveSession, err)
+			}
+			logger.Infof("unable to create message session, client-side error (status %d), won't retry: %s", actionsErr.StatusCode, err.Error())
 			return nil, fmt.Errorf("create message session http request failed. %w", err)
 		}
 

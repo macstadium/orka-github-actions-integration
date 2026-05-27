@@ -1,6 +1,9 @@
 package retryablehttp
 
 import (
+	"context"
+	"errors"
+
 	"go.uber.org/zap"
 )
 
@@ -9,6 +12,12 @@ type LeveledLogger struct {
 }
 
 func (l *LeveledLogger) Error(msg string, keysAndValues ...interface{}) {
+	for i := 1; i < len(keysAndValues); i += 2 {
+		if err, ok := keysAndValues[i].(error); ok && errors.Is(err, context.Canceled) {
+			l.logger.Debugw(msg, keysAndValues...)
+			return
+		}
+	}
 	l.logger.Errorw(msg, keysAndValues...)
 }
 

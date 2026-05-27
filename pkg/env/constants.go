@@ -35,4 +35,6 @@ const (
 	EnableMetricsEnvName       = "ENABLE_METRICS"
 	MetricsAddrEnvName         = "METRICS_ADDR"
 	MetricsPollIntervalEnvName = "METRICS_POLL_INTERVAL"
+
+	ManageRunnerScaleSetsEnvName = "MANAGE_RUNNER_SCALE_SETS"
 )
