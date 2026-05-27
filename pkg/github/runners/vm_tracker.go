@@ -64,8 +64,10 @@ func (tracker *VMTracker) seedFromOrka(ctx context.Context, runnerScaleSetName s
 	tracker.logger.Infof("Seeded %d VMs matching prefix %q out of %d total", matched, runnerScaleSetName, len(vms))
 }
 
-func (tracker *VMTracker) Start(ctx context.Context, interval time.Duration, runnerScaleSetName string) {
-	tracker.seedFromOrka(ctx, runnerScaleSetName)
+func (tracker *VMTracker) Start(ctx context.Context, interval time.Duration, runnerScaleSetName string, seedOnStart bool) {
+	if seedOnStart {
+		tracker.seedFromOrka(ctx, runnerScaleSetName)
+	}
 
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()

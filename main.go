@@ -112,7 +112,7 @@ func run(ctx context.Context, actionsClient *actions.ActionsClient, orkaClient *
 	runnerProvisioner := provisioner.NewRunnerProvisioner(runnerScaleSet, actionsClient, orkaClient, envData)
 
 	vmTracker := runners.NewVMTracker(orkaClient, actionsClient, logger)
-	go vmTracker.Start(ctx, envData.VMTrackerInterval, runnerScaleSet.Name)
+	go vmTracker.Start(ctx, envData.VMTrackerInterval, runnerScaleSet.Name, envData.VMTrackerSeedOnStart)
 
 	runnerMessageProcessor := runners.NewRunnerMessageProcessor(ctx, runnerManager, runnerProvisioner, vmTracker, runnerScaleSet)
 

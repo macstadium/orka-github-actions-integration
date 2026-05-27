@@ -48,7 +48,8 @@ type Data struct {
 	RunnerDeregistrationTimeout      time.Duration
 	RunnerDeregistrationPollInterval time.Duration
 
-	VMTrackerInterval time.Duration
+	VMTrackerInterval    time.Duration
+	VMTrackerSeedOnStart bool
 
 	LogLevel string
 
@@ -83,7 +84,8 @@ func ParseEnv() *Data {
 		RunnerDeregistrationTimeout:      getDurationEnv(RunnerDeregistrationTimeoutEnvName, 30*time.Second),
 		RunnerDeregistrationPollInterval: getDurationEnv(RunnerDeregistrationPollIntervalEnvName, 2*time.Second),
 
-		VMTrackerInterval: getDurationEnv(VMTrackerIntervalEnvName, 300*time.Second),
+		VMTrackerInterval:    getDurationEnv(VMTrackerIntervalEnvName, 300*time.Second),
+		VMTrackerSeedOnStart: getBoolEnv(VMTrackerSeedOnStartEnvName, true),
 
 		LogLevel: getEnvWithDefault(LogLevelEnvName, logging.LogLevelInfo),
 
