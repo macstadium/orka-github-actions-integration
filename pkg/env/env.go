@@ -56,6 +56,8 @@ type Data struct {
 	EnableMetrics       bool
 	MetricsAddr         string
 	MetricsPollInterval time.Duration
+
+	ManageRunnerScaleSets bool
 }
 
 func ParseEnv() *Data {
@@ -92,6 +94,8 @@ func ParseEnv() *Data {
 		EnableMetrics:       getBoolEnv(EnableMetricsEnvName, false),
 		MetricsAddr:         getEnvWithDefault(MetricsAddrEnvName, ":8080"),
 		MetricsPollInterval: getDurationEnv(MetricsPollIntervalEnvName, 30*time.Second),
+
+		ManageRunnerScaleSets: getBoolEnv(ManageRunnerScaleSetsEnvName, false),
 	}
 
 	envData.OrkaURL = strings.TrimSuffix(envData.OrkaURL, "/")

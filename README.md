@@ -63,6 +63,7 @@ The Orka GitHub runner requires the following environment variabales to be confi
 * `ENABLE_METRICS`: (Optional) Enables Prometheus metrics exposure. When set to `true`, the service will expose metrics at the `/metrics` endpoint. Defaults to `false`.
 * `METRICS_ADDR`: (Optional) The address where the Prometheus metrics endpoint will be exposed (e.g., `:8080`). Defaults to `:8080`.
 * `METRICS_POLL_INTERVAL`: (Optional) Interval at which runner scale set statistics are polled and metrics are updated (e.g., `30s`, `1m`). Defaults to `30s`.
+* `MANAGE_RUNNER_SCALE_SETS`: (Optional) When set to `true`, deletes any existing runner scale set with the same name on startup and deletes the scale set on exit. When set to `false`, reuses an existing scale set if found and skips deletion on exit. Defaults to `false`.
 
 For a complete example of the required format, refer to the `.env` file located in the examples directory [here](./examples/.env).
 
