@@ -41,3 +41,10 @@ type OrkaClusterInfoResponseModel struct {
 	AppClientId       string `json:"appClientId"`
 	BaseOauthEndpoint string `json:"baseOauthEndpoint"`
 }
+
+type OrkaVMInfo struct {
+	Name   string  `json:"name"`
+	IP     string  `json:"ip"`
+	SSH    *int    `json:"ssh,omitempty"`
+	Status VMPhase `json:"status"`
+}

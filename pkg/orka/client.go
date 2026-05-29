@@ -15,6 +15,7 @@ import (
 type OrkaService interface {
 	DeployVM(ctx context.Context, namePrefix, vmConfig string) (*OrkaVMDeployResponseModel, error)
 	DeleteVM(ctx context.Context, name string) error
+	ListVMs(ctx context.Context, namePrefix string) ([]*OrkaVMInfo, error)
 }
 
 type OrkaClient struct {
@@ -33,6 +34,21 @@ func (client *OrkaClient) DeployVM(ctx context.Context, namePrefix, vmConfig str
 	}
 
 	return (*res)[0], nil
+}
+
+func (client *OrkaClient) ListVMs(ctx context.Context, namePrefix string) ([]*OrkaVMInfo, error) {
+	res, err := exec.ExecJSONCommand[[]*OrkaVMInfo]("orka3", []string{"vm", "list", "--namespace", client.envData.OrkaNamespace, "-o", "json"})
+	if err != nil {
+		return nil, err
+	}
+
+	var filtered []*OrkaVMInfo
+	for _, vm := range *res {
+		if strings.HasPrefix(vm.Name, namePrefix) {
+			filtered = append(filtered, vm)
+		}
+	}
+	return filtered, nil
 }
 
 func (client *OrkaClient) DeleteVM(ctx context.Context, name string) error {

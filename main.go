@@ -18,6 +18,7 @@ import (
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
 	"github.com/macstadium/orka-github-actions-integration/pkg/metrics"
 	"github.com/macstadium/orka-github-actions-integration/pkg/orka"
+	"github.com/macstadium/orka-github-actions-integration/pkg/reconciler"
 	provisioner "github.com/macstadium/orka-github-actions-integration/pkg/runner-provisioner"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -83,6 +84,20 @@ func main() {
 		panic(fmt.Sprintf("unable to access Orka cluster. More info: %s", err.Error()))
 	}
 
+	vmTracker := runners.NewVMTracker(orkaClient, actionsClient, logger)
+	go vmTracker.Start(ctx, envData.VMTrackerInterval)
+
+	runnerProvisioner := provisioner.NewRunnerProvisioner(runnerScaleSet, actionsClient, orkaClient, envData)
+
+	var existingVMs []*orka.OrkaVMInfo
+	if envData.EnableReconciliation {
+		var listErr error
+		existingVMs, listErr = orkaClient.ListVMs(ctx, runnerScaleSet.Name)
+		if listErr != nil {
+			logger.Warnf("failed to list existing VMs for reconciliation: %v", listErr)
+		}
+	}
+
 	runnerManager, err := runners.NewRunnerManager(ctx, actionsClient, runnerScaleSet.Id)
 	if errors.Is(err, runners.ErrActiveSession) {
 		logger.Infof("scale set %s (id=%d) has a stale active session, deleting and recreating", runnerScaleSet.Name, runnerScaleSet.Id)
@@ -94,6 +109,7 @@ func main() {
 			panic(fmt.Sprintf("error recreating scale set after active session conflict: %s", err.Error()))
 		}
 		logger.Infof("recreated scale set %s (id=%d)", runnerScaleSet.Name, runnerScaleSet.Id)
+		runnerProvisioner = provisioner.NewRunnerProvisioner(runnerScaleSet, actionsClient, orkaClient, envData)
 		runnerManager, err = runners.NewRunnerManager(ctx, actionsClient, runnerScaleSet.Id)
 	}
 	if err != nil {
@@ -124,7 +140,14 @@ func main() {
 		}
 	}()
 
-	run(ctx, actionsClient, orkaClient, runnerScaleSet, runnerManager, envData, logger)
+	runnerMessageProcessor := runners.NewRunnerMessageProcessor(ctx, runnerManager, runnerProvisioner, vmTracker, runnerScaleSet)
+
+	if envData.EnableReconciliation {
+		vmReconciler := reconciler.NewVMReconciler(actionsClient, runnerProvisioner, runnerMessageProcessor.AdoptVM, envData)
+		go vmReconciler.ReconcileVMs(ctx, existingVMs)
+	}
+
+	run(ctx, runnerMessageProcessor, runnerScaleSet, logger)
 }
 
 func createScaleSet(ctx context.Context, actionsClient *actions.ActionsClient, runnerName string, groupId int) (*types.RunnerScaleSet, error) {
@@ -144,15 +167,8 @@ func createScaleSet(ctx context.Context, actionsClient *actions.ActionsClient, r
 	})
 }
 
-func run(ctx context.Context, actionsClient *actions.ActionsClient, orkaClient *orka.OrkaClient, runnerScaleSet *types.RunnerScaleSet, runnerManager *runners.RunnerManager, envData *env.Data, logger *zap.SugaredLogger) {
-	runnerProvisioner := provisioner.NewRunnerProvisioner(runnerScaleSet, actionsClient, orkaClient, envData)
-
-	vmTracker := runners.NewVMTracker(orkaClient, actionsClient, logger)
-	go vmTracker.Start(ctx, envData.VMTrackerInterval)
-
-	runnerMessageProcessor := runners.NewRunnerMessageProcessor(ctx, runnerManager, runnerProvisioner, vmTracker, runnerScaleSet)
-
-	if err := runnerMessageProcessor.StartProcessingMessages(); err != nil && !errors.Is(err, context.Canceled) {
+func run(ctx context.Context, processor *runners.RunnerMessageProcessor, runnerScaleSet *types.RunnerScaleSet, logger *zap.SugaredLogger) {
+	if err := processor.StartProcessingMessages(); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Errorf("failed to start processing messages for runnerScaleSet %s: %v", runnerScaleSet.Name, err)
 	}
 }
