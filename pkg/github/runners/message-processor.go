@@ -105,8 +105,11 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 
 	p.logger.Infof("process batched runner scale set job messages with id %d and batch size %d", message.MessageId, len(batchedMessages))
 
-	requiredRunners := message.Statistics.TotalAssignedJobs - message.Statistics.TotalRegisteredRunners
+	inflight := int(p.provisioningInflight.Load())
+	requiredRunners := message.Statistics.TotalAssignedJobs - message.Statistics.TotalRegisteredRunners - inflight
 	provisionedRunners := 0
+
+	p.logger.Infof("provisioning inflight: %d, required runners: %d", inflight, requiredRunners)
 
 	if message.MessageId == 0 && len(batchedMessages) == 0 {
 		p.logger.Infof("initial message received, provision runners to cover assigned-job gap")
@@ -201,12 +204,14 @@ func (p *RunnerMessageProcessor) AdoptVM(vmName string) {
 }
 
 func (p *RunnerMessageProcessor) startRunner(job jobIdentity) {
+	p.provisioningInflight.Add(1)
 	go func() {
 		var executionErr error
 
 		defer p.removeUpstreamCanceledJob(job)
 
 		executor, commands, provisioningErr := p.provisionRunnerWithRetry(p.ctx, job)
+		p.provisioningInflight.Add(-1)
 		if provisioningErr != nil {
 			if errors.Is(provisioningErr, context.Canceled) {
 				p.logger.Infof("provisioning canceled for %s", p.runnerScaleSetName)

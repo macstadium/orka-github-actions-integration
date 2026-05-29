@@ -7,6 +7,7 @@ package runners
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/actions"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/messagequeue"
@@ -47,4 +48,5 @@ type RunnerMessageProcessor struct {
 	upstreamCanceledJobsMutex sync.RWMutex
 	runnerContextCancels      map[string]context.CancelFunc
 	runnerContextCancelsMutex sync.Mutex
+	provisioningInflight      atomic.Int32
 }
