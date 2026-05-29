@@ -28,6 +28,11 @@ type RunnerProvisioner struct {
 	mu sync.Mutex
 }
 
+const (
+	SentinelSetupComplete = "/tmp/orka-runner-setup-complete"
+	SentinelRunComplete   = "/tmp/orka-runner-run-complete"
+)
+
 var commands_template = []string{
 	"set -e",
 	"echo \"Downloading Git Action Runner from https://github.com/actions/runner/releases/download/v$VERSION/actions-runner-osx-$(uname -m | sed 's/86_//')-$VERSION.tar.gz\"",
@@ -38,8 +43,10 @@ var commands_template = []string{
 	"cd /Users/$USERNAME/actions-runner",
 	"tar xzf /Users/$USERNAME/actions-runner/actions-runner.tar.gz",
 	"echo 'Git Action Runner unarchive completed'",
+	"touch " + SentinelSetupComplete,
 	"echo 'Starting Git Action Runner'",
 	"/Users/$USERNAME/actions-runner/run.sh --jitconfig $JITCONFIG",
+	"touch " + SentinelRunComplete,
 	"echo 'Git Action Runner exited'",
 }
 

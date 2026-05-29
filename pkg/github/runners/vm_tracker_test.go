@@ -37,6 +37,10 @@ func (m *MockOrkaClient) DeployVM(ctx context.Context, namePrefix, vmConfig stri
 	return nil, nil
 }
 
+func (m *MockOrkaClient) ListVMs(ctx context.Context, namePrefix string) ([]*orka.OrkaVMInfo, error) {
+	return nil, nil
+}
+
 type MockActionsClient struct {
 	GetRunnerFunc func(ctx context.Context, runnerName string) (*types.RunnerReference, error)
 }
