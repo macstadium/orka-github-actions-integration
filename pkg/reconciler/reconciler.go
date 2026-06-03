@@ -2,6 +2,7 @@ package reconciler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -113,37 +114,66 @@ func (r *VMReconciler) checkVMState(vm *orka.OrkaVMInfo) (vmState, error) {
 	}
 	defer client.Close()
 
-	if !r.fileExists(client, provisioner.SentinelSetupComplete) {
+	setupComplete, err := r.fileExists(client, provisioner.SentinelSetupComplete)
+	if err != nil {
+		return vmStateNeedsDeletion, fmt.Errorf("setup sentinel check failed: %w", err)
+	}
+	if !setupComplete {
+		r.logger.Infof("reconciliation: VM %s setup is not complete, deleting", vm.Name)
 		return vmStateNeedsDeletion, nil
 	}
 
-	if r.fileExists(client, provisioner.SentinelRunComplete) {
+	runComplete, err := r.fileExists(client, provisioner.SentinelRunComplete)
+	if err != nil {
+		return vmStateNeedsDeletion, fmt.Errorf("run sentinel check failed: %w", err)
+	}
+	if runComplete {
+		r.logger.Infof("reconciliation: VM %s run.sh completed, cleaning up", vm.Name)
 		return vmStateRunComplete, nil
 	}
 
-	if !r.isProcessRunning(client, "actions-runner/run.sh") {
+	processRunning, err := r.isProcessRunning(client, "actions-runner/run.sh")
+	if err != nil {
+		return vmStateNeedsDeletion, fmt.Errorf("run.sh process check failed: %w", err)
+	}
+	if !processRunning {
+		r.logger.Infof("reconciliation: VM %s run.sh is not running, deleting", vm.Name)
 		return vmStateNeedsDeletion, nil
 	}
 
 	return vmStateActive, nil
 }
 
-func (r *VMReconciler) fileExists(client *ssh.Client, path string) bool {
-	session, err := client.NewSession()
-	if err != nil {
-		return false
-	}
-	defer session.Close()
-	return session.Run(fmt.Sprintf("test -f %s", path)) == nil
+func (r *VMReconciler) fileExists(client *ssh.Client, path string) (bool, error) {
+	return r.runBoolCheck(client, fmt.Sprintf("test -f %s", path))
 }
 
-func (r *VMReconciler) isProcessRunning(client *ssh.Client, pattern string) bool {
+func (r *VMReconciler) isProcessRunning(client *ssh.Client, pattern string) (bool, error) {
+	return r.runBoolCheck(client, fmt.Sprintf("pgrep -f %q", pattern))
+}
+
+// runBoolCheck runs a remote command whose exit status encodes a boolean:
+// 0 means true, 1 means a clean negative (file missing / no process matched),
+// anything else (SSH failure, command error) is returned as an error so a
+// failed check is never mistaken for a negative result.
+func (r *VMReconciler) runBoolCheck(client *ssh.Client, cmd string) (bool, error) {
 	session, err := client.NewSession()
 	if err != nil {
-		return false
+		return false, fmt.Errorf("ssh session failed: %w", err)
 	}
 	defer session.Close()
-	return session.Run(fmt.Sprintf("pgrep -f %q", pattern)) == nil
+
+	err = session.Run(cmd)
+	if err == nil {
+		return true, nil
+	}
+
+	var exitErr *ssh.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitStatus() == 1 {
+		return false, nil
+	}
+
+	return false, fmt.Errorf("%q failed: %w", cmd, err)
 }
 
 func (r *VMReconciler) resolveVMIP(vmIP string) (string, error) {
