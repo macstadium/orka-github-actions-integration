@@ -109,10 +109,12 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 	provisionedRunners := 0
 
 	if message.MessageId == 0 && len(batchedMessages) == 0 {
-		// The session-creation snapshot can lag: runners that are already busy may
-		// not be counted in TotalRegisteredRunners yet. A busy or idle runner must
-		// be registered, so trust whichever count is larger.
-		effectiveRegisteredRunners := max(message.Statistics.TotalRegisteredRunners, message.Statistics.TotalBusyRunners+message.Statistics.TotalIdleRunners)
+		// The session-creation snapshot can lag: runners whose jobs are already
+		// running may not be counted in TotalRegisteredRunners yet. A running job
+		// implies a live runner picked it up (unlike TotalBusyRunners, which only
+		// means a job is pinned to a runner record - possibly one that never
+		// connected), so trust whichever count is larger.
+		effectiveRegisteredRunners := max(message.Statistics.TotalRegisteredRunners, message.Statistics.TotalRunningJobs)
 		requiredRunners = message.Statistics.TotalAssignedJobs - effectiveRegisteredRunners
 		p.logger.Infof("initial message received, provision runners to cover assigned-job gap (effective registered runners: %d, required runners: %d)", effectiveRegisteredRunners, requiredRunners)
 		for provisionedRunners < requiredRunners {
