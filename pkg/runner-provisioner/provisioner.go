@@ -37,7 +37,7 @@ var commands_template = []string{
 	"set -e",
 	"echo \"Downloading Git Action Runner from https://github.com/actions/runner/releases/download/v$VERSION/actions-runner-osx-$(uname -m | sed 's/86_//')-$VERSION.tar.gz\"",
 	"mkdir -p /Users/$USERNAME/actions-runner",
-	"curl -o /Users/$USERNAME/actions-runner/actions-runner.tar.gz -L https://github.com/actions/runner/releases/download/v$VERSION/actions-runner-osx-$(uname -m | sed 's/86_//')-$VERSION.tar.gz",
+	"curl -fSL --retry 10 --retry-delay 5 --retry-all-errors -o /Users/$USERNAME/actions-runner/actions-runner.tar.gz https://github.com/actions/runner/releases/download/v$VERSION/actions-runner-osx-$(uname -m | sed 's/86_//')-$VERSION.tar.gz",
 	"echo 'Git Action Runner download completed'",
 	"echo 'Unarchiving Git Action Runner /Users/$USERNAME/actions-runner/actions-runner.tar.gz'",
 	"cd /Users/$USERNAME/actions-runner",
