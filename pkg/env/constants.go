@@ -37,4 +37,6 @@ const (
 	MetricsPollIntervalEnvName = "METRICS_POLL_INTERVAL"
 
 	ManageRunnerScaleSetsEnvName = "MANAGE_RUNNER_SCALE_SETS"
+
+	EnableReconciliationEnvName = "ENABLE_RECONCILIATION"
 )
