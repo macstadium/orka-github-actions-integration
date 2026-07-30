@@ -17,9 +17,9 @@ all: tidy fmt lint build
 .PHONY: lint
 lint:
 	@echo "[golangci-lint] Running golangci-lint..."
-	@go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.60.3 run --timeout=5m 2>&1
+	@go run github.com/golangci/golangci-lint/cmd/golangci-lint@v1.64.8 run --timeout=5m 2>&1
 	@echo "[staticcheck] Running staticcheck..."
-	@go run honnef.co/go/tools/cmd/staticcheck@v0.5.1
+	@go run honnef.co/go/tools/cmd/staticcheck@v0.7.0
 	@echo "------------------------------------[Done]"
 
 .PHONY: fmt
