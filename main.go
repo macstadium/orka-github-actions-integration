@@ -11,9 +11,9 @@ import (
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/constants"
 	"github.com/macstadium/orka-github-actions-integration/pkg/env"
-	"github.com/macstadium/orka-github-actions-integration/pkg/github"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/actions"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/runners"
+	"github.com/macstadium/orka-github-actions-integration/pkg/github/scalesetclient"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
 	"github.com/macstadium/orka-github-actions-integration/pkg/metrics"
@@ -33,11 +33,6 @@ func main() {
 	logging.SetupLogger(envData.LogLevel)
 	logger := logging.Logger.Named("main")
 
-	config, err := github.NewGitHubConfig(envData.GitHubURL)
-	if err != nil {
-		panic(err)
-	}
-
 	runnerName := envData.Runners[0].Name
 	groupId := constants.DefaultRunnerGroupID
 	if envData.Runners[0].Id != 0 {
@@ -48,7 +43,7 @@ func main() {
 		panic(fmt.Sprintf("invalid runner name: %s. Runner name must consist of lower case alphanumeric characters or ' - ', start with an alphabetic character, end with an alphanumeric character, and may not be longer than 63 characters.", runnerName))
 	}
 
-	actionsClient, err := actions.NewActionsClient(ctx, envData, config)
+	actionsClient, err := scalesetclient.New(envData, envData.MaxRunners)
 	if err != nil {
 		panic(err)
 	}
@@ -150,7 +145,7 @@ func main() {
 	run(ctx, runnerMessageProcessor, runnerScaleSet, logger)
 }
 
-func createScaleSet(ctx context.Context, actionsClient *actions.ActionsClient, runnerName string, groupId int) (*types.RunnerScaleSet, error) {
+func createScaleSet(ctx context.Context, actionsClient actions.ActionsService, runnerName string, groupId int) (*types.RunnerScaleSet, error) {
 	return actionsClient.CreateRunnerScaleSet(ctx, &types.RunnerScaleSet{
 		Name:          runnerName,
 		RunnerGroupId: groupId,
