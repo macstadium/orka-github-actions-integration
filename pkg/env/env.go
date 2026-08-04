@@ -91,7 +91,7 @@ func ParseEnv() *Data {
 
 		VMTrackerInterval: getDurationEnv(VMTrackerIntervalEnvName, 300*time.Second),
 
-		MaxRunners: getIntEnv(MaxRunnersEnvName, 10),
+		MaxRunners: getIntEnv(MaxRunnersEnvName, 9000),
 
 		LogLevel: getEnvWithDefault(LogLevelEnvName, logging.LogLevelInfo),
 
