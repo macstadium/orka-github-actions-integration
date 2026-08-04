@@ -33,6 +33,10 @@ func main() {
 	logging.SetupLogger(envData.LogLevel)
 	logger := logging.Logger.Named("main")
 
+	if apiUrl := os.Getenv(env.GitHubAPIURLEnvName); apiUrl != "" {
+		logger.Warnf("%s is set to %q but is no longer used. The GitHub API URL is derived from %s; the derived value is logged by the scaleset client below. Remove %s to avoid confusion.", env.GitHubAPIURLEnvName, apiUrl, env.GitHubURLEnvName, env.GitHubAPIURLEnvName)
+	}
+
 	runnerName := envData.Runners[0].Name
 	groupId := constants.DefaultRunnerGroupID
 	if envData.Runners[0].Id != 0 {
