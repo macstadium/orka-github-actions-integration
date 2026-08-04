@@ -2,10 +2,12 @@ package scalesetclient
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/env"
+	"github.com/macstadium/orka-github-actions-integration/pkg/github/actions"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -118,15 +120,19 @@ var _ = Describe("SDK-backed client against a GHES-shaped stub", func() {
 			client = newClientAgainst(s)
 		})
 
-		It("returns an error instead of skipping the message", func() {
-			s.messageEnvelope = typedEnvelope(1, "SomeFutureMessageType", s.statisticsBody(), nil)
+		It("returns a skippable message so it can be acknowledged and deleted", func() {
+			s.messageEnvelope = typedEnvelope(41, "SomeFutureMessageType", s.statisticsBody(), nil)
 
 			_, err := client.CreateMessageSession(ctx, 1, "owner")
 			Expect(err).NotTo(HaveOccurred())
 
-			_, err = client.GetMessage(ctx, "", "", 0)
-			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("unsupported message type"))
+			msg, err := client.GetMessage(ctx, "", "", 0)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(msg).NotTo(BeNil())
+			Expect(msg.MessageId).To(Equal(int64(41)))
+			Expect(msg.MessageType).To(Equal("SomeFutureMessageType"))
+			Expect(msg.Body).To(BeEmpty())
+			Expect(msg.Statistics).NotTo(BeNil(), "the processor rejects messages with nil statistics")
 		})
 
 		It("tolerates unrecognised inner job message types", func() {
@@ -178,10 +184,13 @@ var _ = Describe("SDK-backed client against a GHES-shaped stub", func() {
 			client = newClientAgainst(s)
 		})
 
-		It("surfaces the conflict only as text, not as an inspectable status", func() {
+		It("surfaces the conflict as an inspectable ActionsError so recovery still fires", func() {
 			_, err := client.CreateMessageSession(ctx, 1, "owner")
 			Expect(err).To(HaveOccurred())
-			Expect(err.Error()).To(ContainSubstring("409"))
+
+			actionsErr := &actions.ActionsError{}
+			Expect(errors.As(err, &actionsErr)).To(BeTrue())
+			Expect(actionsErr.StatusCode).To(Equal(http.StatusConflict))
 		})
 	})
 
