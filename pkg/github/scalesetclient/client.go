@@ -5,17 +5,29 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
+	"net/url"
+	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/actions/scaleset"
 	"github.com/google/uuid"
 	"github.com/macstadium/orka-github-actions-integration/pkg/env"
+	"github.com/macstadium/orka-github-actions-integration/pkg/github/actions"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
 	"go.uber.org/zap/exp/zapslog"
 )
 
-const jobMessagesType = "RunnerScaleSetJobMessages"
+const (
+	jobMessagesType     = "RunnerScaleSetJobMessages"
+	messageAPIVersion   = "application/json; api-version=6.0-preview"
+	unsupportedTypeText = "unsupported message type"
+)
+
+var statusCodePattern = regexp.MustCompile(`status="(\d{3})`)
 
 type Client struct {
 	sdk    *scaleset.Client
@@ -96,7 +108,7 @@ func (c *Client) DeleteRunner(ctx context.Context, runnerID int) error {
 func (c *Client) CreateMessageSession(ctx context.Context, runnerScaleSetId int, owner string) (*types.RunnerScaleSetSession, error) {
 	sessionClient, err := c.sdk.MessageSessionClient(ctx, runnerScaleSetId, owner)
 	if err != nil {
-		return nil, err
+		return nil, withStatusCode(err)
 	}
 
 	c.mu.Lock()
@@ -137,8 +149,14 @@ func (c *Client) GetMessage(ctx context.Context, messageQueueUrl, messageQueueAc
 	}
 
 	msg, err := session.GetMessage(ctx, int(lastMessageId), c.maxRunners)
-	if err != nil || msg == nil {
+	if err != nil {
+		if strings.Contains(err.Error(), unsupportedTypeText) {
+			return c.skippableMessage(ctx, session, lastMessageId)
+		}
 		return nil, err
+	}
+	if msg == nil {
+		return nil, nil
 	}
 
 	body, err := encodeBody(msg)
@@ -164,6 +182,79 @@ func (c *Client) DeleteMessage(ctx context.Context, messageQueueUrl, messageQueu
 
 func (c *Client) GetAcquirableJobs(ctx context.Context, runnerScaleSetId int) (*types.AcquirableJobList, error) {
 	return &types.AcquirableJobList{Count: 0, Jobs: []types.AcquirableJob{}}, nil
+}
+
+func (c *Client) skippableMessage(ctx context.Context, session *scaleset.MessageSessionClient, lastMessageId int64) (*types.RunnerScaleSetMessage, error) {
+	current := session.Session()
+
+	target, err := url.Parse(current.MessageQueueURL)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse message queue url: %w", err)
+	}
+	if lastMessageId > 0 {
+		query := target.Query()
+		query.Set("lastMessageId", strconv.FormatInt(lastMessageId, 10))
+		target.RawQuery = query.Encode()
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", messageAPIVersion)
+	req.Header.Set("Authorization", "Bearer "+current.MessageQueueAccessToken)
+	req.Header.Set(scaleset.HeaderScaleSetMaxCapacity, strconv.Itoa(c.maxRunners))
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("failed to re-read unsupported message: status %s", resp.Status)
+	}
+
+	var envelope struct {
+		MessageID   int64                          `json:"messageId"`
+		MessageType string                         `json:"messageType"`
+		Statistics  *types.RunnerScaleSetStatistic `json:"statistics"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return nil, fmt.Errorf("failed to decode unsupported message envelope: %w", err)
+	}
+
+	if envelope.MessageType == jobMessagesType {
+		return nil, fmt.Errorf("message %d is decodable on retry, deferring to the SDK", envelope.MessageID)
+	}
+
+	c.logger.Warn("re-read unsupported message type so it can be acknowledged",
+		slog.Int64("messageId", envelope.MessageID),
+		slog.String("messageType", envelope.MessageType))
+
+	return &types.RunnerScaleSetMessage{
+		MessageId:   envelope.MessageID,
+		MessageType: envelope.MessageType,
+		Statistics:  envelope.Statistics,
+	}, nil
+}
+
+func withStatusCode(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	match := statusCodePattern.FindStringSubmatch(err.Error())
+	if match == nil {
+		return err
+	}
+
+	status, convErr := strconv.Atoi(match[1])
+	if convErr != nil {
+		return err
+	}
+
+	return &actions.ActionsError{StatusCode: status, Message: err.Error()}
 }
 
 func (c *Client) currentSession() (*scaleset.MessageSessionClient, error) {
