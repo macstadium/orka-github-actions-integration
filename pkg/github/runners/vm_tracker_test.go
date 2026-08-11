@@ -41,6 +41,10 @@ func (m *MockOrkaClient) ListVMs(ctx context.Context, namePrefix string) ([]*ork
 	return nil, nil
 }
 
+func (m *MockOrkaClient) ListVMConfigs(ctx context.Context) ([]*orka.OrkaVMConfigResponseModel, error) {
+	return nil, nil
+}
+
 type MockActionsClient struct {
 	GetRunnerFunc func(ctx context.Context, runnerName string) (*types.RunnerReference, error)
 }

@@ -16,6 +16,7 @@ type OrkaService interface {
 	DeployVM(ctx context.Context, namePrefix, vmConfig string) (*OrkaVMDeployResponseModel, error)
 	DeleteVM(ctx context.Context, name string) error
 	ListVMs(ctx context.Context, namePrefix string) ([]*OrkaVMInfo, error)
+	ListVMConfigs(ctx context.Context) ([]*OrkaVMConfigResponseModel, error)
 }
 
 type OrkaClient struct {
@@ -49,6 +50,17 @@ func (client *OrkaClient) ListVMs(ctx context.Context, namePrefix string) ([]*Or
 		}
 	}
 	return filtered, nil
+}
+
+// ListVMConfigs returns all VM configs in the cluster. VM configs are global (they live
+// in the orka-default namespace), so this takes no namespace filter.
+func (client *OrkaClient) ListVMConfigs(ctx context.Context) ([]*OrkaVMConfigResponseModel, error) {
+	res, err := exec.ExecJSONCommand[[]*OrkaVMConfigResponseModel]("orka3", []string{"vmc", "list", "--output", "json"})
+	if err != nil {
+		return nil, err
+	}
+
+	return *res, nil
 }
 
 func (client *OrkaClient) DeleteVM(ctx context.Context, name string) error {

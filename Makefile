@@ -7,6 +7,11 @@ build:
 	@mkdir -p ${BUILD_DIR}
 	@CGO_ENABLED=0 go build --ldflags "-X 'main.version=$(BUILD_VERSION)-$(GIT_HASH)'" -o ${BUILD_DIR}/app .
 
+.PHONY: build-fleet
+build-fleet:
+	@mkdir -p ${BUILD_DIR}
+	@CGO_ENABLED=0 go build --ldflags "-X 'main.version=$(BUILD_VERSION)-$(GIT_HASH)'" -o ${BUILD_DIR}/spike-fleet ./cmd/spike-fleet
+
 .PHONY: clean
 clean:
 	@rm -fr ${BUILD_DIR}
@@ -35,6 +40,10 @@ tidy:
 .PHONY: run
 run: build
 	@${BUILD_DIR}/app
+
+.PHONY: run-fleet
+run-fleet: build-fleet
+	@${BUILD_DIR}/spike-fleet
 
 .PHONY: test
 test:

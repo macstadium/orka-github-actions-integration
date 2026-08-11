@@ -33,6 +33,8 @@ func main() {
 	logging.SetupLogger(envData.LogLevel)
 	logger := logging.Logger.Named("main")
 
+	logger.Info("starting main")
+
 	config, err := github.NewGitHubConfig(envData.GitHubURL)
 	if err != nil {
 		panic(err)
