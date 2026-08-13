@@ -41,18 +41,31 @@ type Client struct {
 func New(envData *env.Data, maxRunners int) (*Client, error) {
 	logger := slog.New(zapslog.NewHandler(logging.Logger.Named("scaleset").Desugar().Core()))
 
-	sdk, err := scaleset.NewClientWithGitHubApp(scaleset.ClientWithGitHubAppConfig{
-		GitHubConfigURL: envData.GitHubURL,
-		GitHubAppAuth: scaleset.GitHubAppAuth{
-			ClientID:       fmt.Sprintf("%d", envData.GitHubAppID),
-			InstallationID: envData.GitHubAppInstallationID,
-			PrivateKey:     envData.GitHubAppPrivateKey,
-		},
-		SystemInfo: scaleset.SystemInfo{
-			System:    "orka-github-actions-integration",
-			Subsystem: "listener",
-		},
-	}, scaleset.WithLogger(logger))
+	systemInfo := scaleset.SystemInfo{
+		System:    "orka-github-actions-integration",
+		Subsystem: "listener",
+	}
+
+	var sdk *scaleset.Client
+	var err error
+
+	if envData.GitHubPAT != "" {
+		sdk, err = scaleset.NewClientWithPersonalAccessToken(scaleset.NewClientWithPersonalAccessTokenConfig{
+			GitHubConfigURL:     envData.GitHubURL,
+			PersonalAccessToken: envData.GitHubPAT,
+			SystemInfo:          systemInfo,
+		}, scaleset.WithLogger(logger))
+	} else {
+		sdk, err = scaleset.NewClientWithGitHubApp(scaleset.ClientWithGitHubAppConfig{
+			GitHubConfigURL: envData.GitHubURL,
+			GitHubAppAuth: scaleset.GitHubAppAuth{
+				ClientID:       fmt.Sprintf("%d", envData.GitHubAppID),
+				InstallationID: envData.GitHubAppInstallationID,
+				PrivateKey:     envData.GitHubAppPrivateKey,
+			},
+			SystemInfo: systemInfo,
+		}, scaleset.WithLogger(logger))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to create scaleset client: %w", err)
 	}

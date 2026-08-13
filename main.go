@@ -37,6 +37,14 @@ func main() {
 		logger.Warnf("%s is set to %q but is no longer used. The GitHub API URL is derived from %s; the derived value is logged by the scaleset client below. Remove %s to avoid confusion.", env.GitHubAPIURLEnvName, apiUrl, env.GitHubURLEnvName, env.GitHubAPIURLEnvName)
 	}
 
+	if envData.GitHubPAT != "" {
+		logger.Infof("authenticating with the personal access token from %s", env.GitHubPATEnvName)
+
+		if os.Getenv(env.GitHubAppIDEnvName) != "" {
+			logger.Warnf("%s is set but is ignored because %s takes precedence. Remove the GitHub App variables to avoid confusion.", env.GitHubAppIDEnvName, env.GitHubPATEnvName)
+		}
+	}
+
 	runnerName := envData.Runners[0].Name
 	groupId := constants.DefaultRunnerGroupID
 	if envData.Runners[0].Id != 0 {
