@@ -1,5 +1,10 @@
 # Creating a GitHub app
 
+> **NOTE**: GitHub App authentication covers repository-level and organization-level runners only.
+> Runners registered at the enterprise level must use a personal access token instead, because
+> GitHub does not grant the `manage_runners:enterprise` permission to App installations. See
+> [Enterprise-level runners](../README.md#enterprise-level-runners).
+
 ## Setup steps
 
 * Choose App Creation Method: Decide whether to create the app for your user account or an organization.
