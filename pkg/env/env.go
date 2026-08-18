@@ -128,29 +128,33 @@ func ParseEnv() *Data {
 	}
 
 	if envData.GitHubPAT == "" {
-		if appID, err := strconv.ParseInt(os.Getenv(GitHubAppIDEnvName), 10, 64); err != nil {
-			errors = append(errors, fmt.Sprintf("%s is not set to a valid number: %s", GitHubAppIDEnvName, err))
+		if !hasAnyGitHubAppEnv(envData) {
+			errors = append(errors, fmt.Sprintf("no GitHub authentication is configured. Set %s to a personal access token, which is required for enterprise-level runners, or configure GitHub App authentication by setting %s, %s, and one of %s or %s", GitHubPATEnvName, GitHubAppIDEnvName, GitHubAppInstallationIDEnvName, GitHubAppPrivateKeyPathEnvName, GitHubAppPrivateKeyEnvName))
 		} else {
-			envData.GitHubAppID = appID
-		}
-
-		if installationID, err := strconv.ParseInt(os.Getenv(GitHubAppInstallationIDEnvName), 10, 64); err != nil {
-			errors = append(errors, fmt.Sprintf("%s is not set to a valid number: %s", GitHubAppInstallationIDEnvName, err))
-		} else {
-			envData.GitHubAppInstallationID = installationID
-		}
-
-		if envData.GitHubAppPrivateKey == "" {
-			gitHubAppPrivateKeyPath := os.Getenv(GitHubAppPrivateKeyPathEnvName)
-			if gitHubAppPrivateKeyPath == "" {
-				errors = append(errors, fmt.Sprintf("GitHub App private key is required. Please provide either a file path to the private key using %s env or the private key directly using %s env variable", GitHubAppPrivateKeyPathEnvName, GitHubAppPrivateKeyEnvName))
+			if appID, err := strconv.ParseInt(os.Getenv(GitHubAppIDEnvName), 10, 64); err != nil {
+				errors = append(errors, fmt.Sprintf("%s is not set to a valid number: %s", GitHubAppIDEnvName, err))
 			} else {
-				privateKeyContent, err := os.ReadFile(gitHubAppPrivateKeyPath)
-				if err != nil {
-					errors = append(errors, err.Error())
-				}
+				envData.GitHubAppID = appID
+			}
 
-				envData.GitHubAppPrivateKey = string(privateKeyContent)
+			if installationID, err := strconv.ParseInt(os.Getenv(GitHubAppInstallationIDEnvName), 10, 64); err != nil {
+				errors = append(errors, fmt.Sprintf("%s is not set to a valid number: %s", GitHubAppInstallationIDEnvName, err))
+			} else {
+				envData.GitHubAppInstallationID = installationID
+			}
+
+			if envData.GitHubAppPrivateKey == "" {
+				gitHubAppPrivateKeyPath := os.Getenv(GitHubAppPrivateKeyPathEnvName)
+				if gitHubAppPrivateKeyPath == "" {
+					errors = append(errors, fmt.Sprintf("GitHub App private key is required. Please provide either a file path to the private key using %s env or the private key directly using %s env variable", GitHubAppPrivateKeyPathEnvName, GitHubAppPrivateKeyEnvName))
+				} else {
+					privateKeyContent, err := os.ReadFile(gitHubAppPrivateKeyPath)
+					if err != nil {
+						errors = append(errors, err.Error())
+					}
+
+					envData.GitHubAppPrivateKey = string(privateKeyContent)
+				}
 			}
 		}
 	}
@@ -178,22 +182,6 @@ func ParseEnv() *Data {
 		errors = append(errors, err.Error())
 	} else {
 		envData.Runners = runners
-	}
-
-	if !regexp.MustCompile(`^https?://.+`).MatchString(envData.OrkaURL) {
-		errors = append(errors, fmt.Sprintf("%s env is required and must be set to the Orka API URL of the Orka cluster, for example, `http://10.221.188.20`", OrkaURLEnvName))
-	}
-
-	if envData.OrkaToken == "" {
-		errors = append(errors, fmt.Sprintf("%s env is required and must be set to a valid JWT token from the Orka cluster", OrkaTokenEnvName))
-	}
-
-	if envData.OrkaVMConfig == "" {
-		errors = append(errors, fmt.Sprintf("%s env is required and must be set to a valid and existing VM config in the Orka cluster", OrkaVMConfigEnvName))
-	}
-
-	if envData.OrkaVMMetadata != "" && !validateMetadata(envData.OrkaVMMetadata) {
-		errors = append(errors, fmt.Sprintf("%s must be formatted as key=value comma separated string", OrkaVMMetadataEnvName))
 	}
 
 	if errs := validateEnv(envData); len(errs) > 0 {
@@ -294,6 +282,13 @@ func validateEnv(envData *Data) []string {
 	}
 
 	return errors
+}
+
+func hasAnyGitHubAppEnv(envData *Data) bool {
+	return os.Getenv(GitHubAppIDEnvName) != "" ||
+		os.Getenv(GitHubAppInstallationIDEnvName) != "" ||
+		os.Getenv(GitHubAppPrivateKeyPathEnvName) != "" ||
+		envData.GitHubAppPrivateKey != ""
 }
 
 func IsEnterpriseConfigURL(githubURL string) bool {
