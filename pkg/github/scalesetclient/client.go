@@ -131,14 +131,6 @@ func (c *Client) CreateMessageSession(ctx context.Context, runnerScaleSetId int,
 	return toSession(sessionClient.Session()), nil
 }
 
-func (c *Client) RefreshMessageSession(ctx context.Context, runnerScaleSetId int, sessionId *uuid.UUID) (*types.RunnerScaleSetSession, error) {
-	session, err := c.currentSession()
-	if err != nil {
-		return nil, err
-	}
-	return toSession(session.Session()), nil
-}
-
 func (c *Client) DeleteMessageSession(ctx context.Context, runnerScaleSetId int, sessionId *uuid.UUID) error {
 	session, err := c.currentSession()
 	if err != nil {

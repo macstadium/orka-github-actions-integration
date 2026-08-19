@@ -69,9 +69,6 @@ func (m *MockActionsClient) CreateMessageSession(ctx context.Context, id int, ow
 func (m *MockActionsClient) DeleteMessageSession(ctx context.Context, id int, sessionId *uuid.UUID) error {
 	return nil
 }
-func (m *MockActionsClient) RefreshMessageSession(ctx context.Context, id int, sessionId *uuid.UUID) (*types.RunnerScaleSetSession, error) {
-	return nil, nil
-}
 func (m *MockActionsClient) AcquireJobs(ctx context.Context, id int, token string, reqIds []int64) ([]int64, error) {
 	return nil, nil
 }
