@@ -19,7 +19,7 @@ The Orka Runner application utilizes Runner scale sets in a manner similar to th
 
 Before using the Orka GitHub Runner, ensure that the following prerequisites are met:
 
-* GitHub App: Having a GitHub App is a prerequisite for using the Orka GitHub Runner. You can find instructions on creating a GitHub App in the [Creating a GitHub app](docs/github-app-setup-steps.md) file.
+* GitHub App: Having a GitHub App is a prerequisite for using the Orka GitHub Runner at the repository or organization level. You can find instructions on creating a GitHub App in the [Creating a GitHub app](docs/github-app-setup-steps.md) file. Registering runners at the enterprise level instead requires a personal access token — see [Enterprise-level runners](#enterprise-level-runners).
 * Connectivity to Orka 3.0+ cluster: Ensure that the machine where the Orka Github Runner is started has connectivity to the Orka cluster. Additionally, ensure that the SSH ports are open to enable the runner to establish SSH connections with Orka VMs.
 * The Orka GitHub runner has been tested with GitHub.com hosted environments. 
 
@@ -37,6 +37,16 @@ When using GHES, make sure to:
 
 The runner will automatically detect if you're using GHES based on the provided URLs and adjust its behavior accordingly.
 
+### Enterprise-level runners
+
+Runners can be registered at the enterprise level by pointing `GITHUB_URL` at an enterprise, for example `https://github.enterprise.com/enterprises/my-enterprise`.
+
+Enterprise-level registration cannot use GitHub App authentication. GitHub does not grant the `manage_runners:enterprise` permission to App installations, so the registration-token request is rejected with `403 Resource not accessible by integration` regardless of where the App is installed. This is a GitHub limitation and applies equally to the Actions Runner Controller; see [Authenticating ARC to the GitHub API](https://docs.github.com/en/enterprise-cloud@latest/actions/hosting-your-own-runners/managing-self-hosted-runners-with-actions-runner-controller/authenticating-to-the-github-api).
+
+To register at the enterprise level, set `GITHUB_PAT` to a classic personal access token with the `admin:enterprise` (`manage_runners:enterprise`) scope, owned by an enterprise owner. The GitHub App variables are then not required, and the runner will refuse to start if an enterprise `GITHUB_URL` is provided without `GITHUB_PAT`.
+
+Fine-grained personal access tokens do not expose enterprise scopes and cannot be used. Because a classic token with this scope is long-lived and broadly privileged, use a dedicated service account and rotate the token on a schedule.
+
 ## Setting up the Orka GitHub runner
 
 You can get the Orka GitHub runner by downloading it from [this link](https://github.com/macstadium/orka-github-actions-integration/pkgs/container/orka-github-runner). You will be able to execute the runner (via `docker run`) from any machine that has connectivity to the Orka cluster. If running within MacStadium, you can request 2 vCPU of Private Cloud x86 compute with 15GB of storage to run the container, with the corresponding compute billed as a part of your Virtual Private Cloud (VPC) services.
@@ -44,10 +54,11 @@ You can get the Orka GitHub runner by downloading it from [this link](https://gi
 ### Environment variables
 
 The Orka GitHub runner requires the following environment variabales to be configured:
-* `GITHUB_APP_ID`: The unique identifier for the GitHub App. Detailed instructions on setting up a GitHub app can be found [here](./docs/github-app-setup-steps.md).
-* `GITHUB_APP_INSTALLATION_ID`: The installation identifier for the GitHub App.
-* `GITHUB_APP_PRIVATE_KEY_PATH` or `GITHUB_APP_PRIVATE_KEY`: The private key associated with the GitHub App. You can either provide the file path to the private key using `GITHUB_APP_PRIVATE_KEY_PATH` or directly provide the private key string using `GITHUB_APP_PRIVATE_KEY`. At least one of these environment variables must be set.
-* `GITHUB_URL`: The URL of the GitHub repository or organization.
+* `GITHUB_APP_ID`: The unique identifier for the GitHub App. Detailed instructions on setting up a GitHub app can be found [here](./docs/github-app-setup-steps.md). Not required when `GITHUB_PAT` is set.
+* `GITHUB_APP_INSTALLATION_ID`: The installation identifier for the GitHub App. Not required when `GITHUB_PAT` is set.
+* `GITHUB_APP_PRIVATE_KEY_PATH` or `GITHUB_APP_PRIVATE_KEY`: The private key associated with the GitHub App. You can either provide the file path to the private key using `GITHUB_APP_PRIVATE_KEY_PATH` or directly provide the private key string using `GITHUB_APP_PRIVATE_KEY`. At least one of these environment variables must be set. Not required when `GITHUB_PAT` is set.
+* `GITHUB_PAT`: (Optional) A classic personal access token used instead of GitHub App authentication. Required for enterprise-level runners, where GitHub App authentication is not supported — see [Enterprise-level runners](#enterprise-level-runners). When set, it takes precedence over the GitHub App variables.
+* `GITHUB_URL`: The URL of the GitHub repository, organization, or enterprise.
 * `GITHUB_API_URL`: (Optional) The URL of the GitHub API endpoint. If not provided, it will default to github.com api endpoint if Github URL starts with "https://github.com" otherwise defaults to "<GITHUB_URL>/api/v3"
 * `GITHUB_TOKEN`: (Optional) A GitHub token to avoid rate limiting. Required for GitHub Enterprise Server.
 * `ORKA_URL`: The URL of the Orka server.

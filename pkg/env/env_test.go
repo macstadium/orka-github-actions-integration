@@ -30,4 +30,19 @@ var _ = Describe("Env Test", func() {
 		Entry("with invalid string with empty value, should be invalid", "key1=", false),
 		Entry("with invalid string with no equals sign, should be invalid", "key1;value1", false),
 	)
+
+	DescribeTable("when detecting an enterprise config URL",
+		func(input string, expected bool) {
+			Expect(IsEnterpriseConfigURL(input)).To(Equal(expected))
+		},
+		Entry("with a GHES enterprise URL, should be an enterprise", "https://github.enterprise.com/enterprises/my-enterprise", true),
+		Entry("with a github.com enterprise URL, should be an enterprise", "https://github.com/enterprises/my-enterprise", true),
+		Entry("with a trailing slash, should be an enterprise", "https://github.com/enterprises/my-enterprise/", true),
+		Entry("with mixed case, should be an enterprise", "https://github.com/Enterprises/my-enterprise", true),
+		Entry("with an organization URL, should not be an enterprise", "https://github.com/my-org", false),
+		Entry("with a repository URL, should not be an enterprise", "https://github.com/my-org/my-repo", false),
+		Entry("with a repository named enterprises, should not be an enterprise", "https://github.com/my-org/enterprises", false),
+		Entry("with an enterprise URL missing the name, should not be an enterprise", "https://github.com/enterprises", false),
+		Entry("with an empty string, should not be an enterprise", "", false),
+	)
 })
