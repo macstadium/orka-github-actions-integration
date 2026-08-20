@@ -194,6 +194,22 @@ var _ = Describe("SDK-backed client against a GHES-shaped stub", func() {
 		})
 	})
 
+	Describe("404 scale set not found", func() {
+		BeforeEach(func() {
+			s.sessionStatus = http.StatusNotFound
+			client = newClientAgainst(s)
+		})
+
+		It("surfaces the missing scale set as an inspectable ActionsError so recovery still fires", func() {
+			_, err := client.CreateMessageSession(ctx, 1, "owner")
+			Expect(err).To(HaveOccurred())
+
+			actionsErr := &actions.ActionsError{}
+			Expect(errors.As(err, &actionsErr)).To(BeTrue())
+			Expect(actionsErr.StatusCode).To(Equal(http.StatusNotFound))
+		})
+	})
+
 	Describe("scale set and runner operations", func() {
 		BeforeEach(func() {
 			client = newClientAgainst(s)

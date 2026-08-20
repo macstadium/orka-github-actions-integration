@@ -98,11 +98,16 @@ func main() {
 	}
 
 	runnerManager, err := runners.NewRunnerManager(ctx, actionsClient, runnerScaleSet.Id)
-	if errors.Is(err, runners.ErrActiveSession) {
-		logger.Infof("scale set %s (id=%d) has a stale active session, deleting and recreating", runnerScaleSet.Name, runnerScaleSet.Id)
-		if err = actionsClient.DeleteRunnerScaleSet(ctx, runnerScaleSet.Id); err != nil {
-			panic(fmt.Sprintf("error deleting scale set with active session: %s", err.Error()))
+	if errors.Is(err, runners.ErrActiveSession) || errors.Is(err, runners.ErrScaleSetNotFound) {
+		if errors.Is(err, runners.ErrActiveSession) {
+			logger.Infof("scale set %s (id=%d) has a stale active session, deleting and recreating", runnerScaleSet.Name, runnerScaleSet.Id)
+			if err = actionsClient.DeleteRunnerScaleSet(ctx, runnerScaleSet.Id); err != nil {
+				panic(fmt.Sprintf("error deleting scale set with active session: %s", err.Error()))
+			}
+		} else {
+			logger.Infof("scale set %s (id=%d) was listed but no longer exists, recreating", runnerScaleSet.Name, runnerScaleSet.Id)
 		}
+
 		runnerScaleSet, err = createScaleSet(ctx, actionsClient, runnerName, groupId)
 		if err != nil {
 			panic(fmt.Sprintf("error recreating scale set after active session conflict: %s", err.Error()))
