@@ -50,6 +50,8 @@ type Data struct {
 
 	VMTrackerInterval time.Duration
 
+	MaxRunners int
+
 	LogLevel string
 
 	EnableMetrics       bool
@@ -88,6 +90,8 @@ func ParseEnv() *Data {
 		RunnerDeregistrationPollInterval: getDurationEnv(RunnerDeregistrationPollIntervalEnvName, 2*time.Second),
 
 		VMTrackerInterval: getDurationEnv(VMTrackerIntervalEnvName, 300*time.Second),
+
+		MaxRunners: getIntEnv(MaxRunnersEnvName, 9000),
 
 		LogLevel: getEnvWithDefault(LogLevelEnvName, logging.LogLevelInfo),
 
@@ -215,6 +219,21 @@ func getBoolEnv(key string, fallback bool) bool {
 	}
 
 	return strings.ToLower(value) == "true"
+}
+
+func getIntEnv(key string, fallback int) int {
+	value := os.Getenv(key)
+
+	if len(value) == 0 {
+		return fallback
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+
+	return parsed
 }
 
 func getDurationEnv(key string, fallback time.Duration) time.Duration {

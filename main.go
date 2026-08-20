@@ -11,9 +11,9 @@ import (
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/constants"
 	"github.com/macstadium/orka-github-actions-integration/pkg/env"
-	"github.com/macstadium/orka-github-actions-integration/pkg/github"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/actions"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/runners"
+	"github.com/macstadium/orka-github-actions-integration/pkg/github/scalesetclient"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
 	"github.com/macstadium/orka-github-actions-integration/pkg/metrics"
@@ -33,9 +33,8 @@ func main() {
 	logging.SetupLogger(envData.LogLevel)
 	logger := logging.Logger.Named("main")
 
-	config, err := github.NewGitHubConfig(envData.GitHubURL)
-	if err != nil {
-		panic(err)
+	if apiUrl := os.Getenv(env.GitHubAPIURLEnvName); apiUrl != "" {
+		logger.Warnf("%s is set to %q but is no longer used. The GitHub API URL is derived from %s; the derived value is logged by the scaleset client below. Remove %s to avoid confusion.", env.GitHubAPIURLEnvName, apiUrl, env.GitHubURLEnvName, env.GitHubAPIURLEnvName)
 	}
 
 	runnerName := envData.Runners[0].Name
@@ -48,7 +47,7 @@ func main() {
 		panic(fmt.Sprintf("invalid runner name: %s. Runner name must consist of lower case alphanumeric characters or ' - ', start with an alphabetic character, end with an alphanumeric character, and may not be longer than 63 characters.", runnerName))
 	}
 
-	actionsClient, err := actions.NewActionsClient(ctx, envData, config)
+	actionsClient, err := scalesetclient.New(envData, envData.MaxRunners)
 	if err != nil {
 		panic(err)
 	}
@@ -99,11 +98,16 @@ func main() {
 	}
 
 	runnerManager, err := runners.NewRunnerManager(ctx, actionsClient, runnerScaleSet.Id)
-	if errors.Is(err, runners.ErrActiveSession) {
-		logger.Infof("scale set %s (id=%d) has a stale active session, deleting and recreating", runnerScaleSet.Name, runnerScaleSet.Id)
-		if err = actionsClient.DeleteRunnerScaleSet(ctx, runnerScaleSet.Id); err != nil {
-			panic(fmt.Sprintf("error deleting scale set with active session: %s", err.Error()))
+	if errors.Is(err, runners.ErrActiveSession) || errors.Is(err, runners.ErrScaleSetNotFound) {
+		if errors.Is(err, runners.ErrActiveSession) {
+			logger.Infof("scale set %s (id=%d) has a stale active session, deleting and recreating", runnerScaleSet.Name, runnerScaleSet.Id)
+			if err = actionsClient.DeleteRunnerScaleSet(ctx, runnerScaleSet.Id); err != nil {
+				panic(fmt.Sprintf("error deleting scale set with active session: %s", err.Error()))
+			}
+		} else {
+			logger.Infof("scale set %s (id=%d) was listed but no longer exists, recreating", runnerScaleSet.Name, runnerScaleSet.Id)
 		}
+
 		runnerScaleSet, err = createScaleSet(ctx, actionsClient, runnerName, groupId)
 		if err != nil {
 			panic(fmt.Sprintf("error recreating scale set after active session conflict: %s", err.Error()))
@@ -150,7 +154,7 @@ func main() {
 	run(ctx, runnerMessageProcessor, runnerScaleSet, logger)
 }
 
-func createScaleSet(ctx context.Context, actionsClient *actions.ActionsClient, runnerName string, groupId int) (*types.RunnerScaleSet, error) {
+func createScaleSet(ctx context.Context, actionsClient actions.ActionsService, runnerName string, groupId int) (*types.RunnerScaleSet, error) {
 	return actionsClient.CreateRunnerScaleSet(ctx, &types.RunnerScaleSet{
 		Name:          runnerName,
 		RunnerGroupId: groupId,

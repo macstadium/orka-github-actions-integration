@@ -84,7 +84,7 @@ func Start(
 	ctx context.Context,
 	logger *zap.SugaredLogger,
 	envData *env.Data,
-	actionsClient *actions.ActionsClient,
+	actionsClient actions.ActionsService,
 	runnerName string,
 	groupId int,
 ) *Metrics {
@@ -122,7 +122,7 @@ func (m *Metrics) startPoller(
 	ctx context.Context,
 	logger *zap.SugaredLogger,
 	interval time.Duration,
-	actionsClient *actions.ActionsClient,
+	actionsClient actions.ActionsService,
 	runnerName string,
 	groupId int,
 ) {

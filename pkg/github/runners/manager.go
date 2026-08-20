@@ -27,7 +27,10 @@ const (
 	runnerScaleSetJobMessagesType = "RunnerScaleSetJobMessages"
 )
 
-var ErrActiveSession = errors.New("runner scale set already has an active session")
+var (
+	ErrActiveSession    = errors.New("runner scale set already has an active session")
+	ErrScaleSetNotFound = errors.New("runner scale set no longer exists")
+)
 
 func NewRunnerManager(ctx context.Context, client actions.ActionsService, runnerScaleSetId int) (*RunnerManager, error) {
 	logger := logging.Logger.Named(fmt.Sprintf("runner-manager-%d", runnerScaleSetId))
@@ -74,6 +77,9 @@ func createSessionWithRetry(ctx context.Context, logger *zap.SugaredLogger, clie
 		if errors.As(err, &actionsErr) {
 			if actionsErr.StatusCode == http.StatusConflict {
 				return nil, fmt.Errorf("%w: %s", ErrActiveSession, err)
+			}
+			if actionsErr.StatusCode == http.StatusNotFound {
+				return nil, fmt.Errorf("%w: %s", ErrScaleSetNotFound, err)
 			}
 			logger.Infof("unable to create message session, client-side error (status %d), won't retry: %s", actionsErr.StatusCode, err.Error())
 			return nil, fmt.Errorf("create message session http request failed. %w", err)

@@ -29,6 +29,8 @@ const (
 
 	VMTrackerIntervalEnvName = "VM_TRACKER_INTERVAL"
 
+	MaxRunnersEnvName = "MAX_RUNNERS"
+
 	LogLevelEnvName = "LOG_LEVEL"
 
 	// Prometheus metrics
