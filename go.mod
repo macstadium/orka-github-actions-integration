@@ -14,7 +14,7 @@ require (
 	github.com/prometheus/client_golang v1.23.2
 	go.uber.org/zap v1.26.0
 	go.uber.org/zap/exp v0.3.0
-	golang.org/x/crypto v0.51.0
+	golang.org/x/crypto v0.52.0
 	k8s.io/apimachinery v0.27.4
 )
 
