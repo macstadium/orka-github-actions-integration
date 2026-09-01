@@ -1,5 +1,9 @@
 package env
 
+// maxUserdataEncodedSize is the maximum size of the base64-encoded userdata
+// script accepted by the Orka API (64KiB).
+const maxUserdataEncodedSize = 65536
+
 const (
 	GitHubAppIDEnvName             = "GITHUB_APP_ID"
 	GitHubAppInstallationIDEnvName = "GITHUB_APP_INSTALLATION_ID"
@@ -14,11 +18,13 @@ const (
 	OrkaURLEnvName   = "ORKA_URL"
 	OrkaTokenEnvName = "ORKA_TOKEN"
 
-	OrkaNamespaceEnvName  = "ORKA_NAMESPACE"
-	OrkaVMConfigEnvName   = "ORKA_VM_CONFIG"
-	OrkaVMUsernameEnvName = "ORKA_VM_USERNAME"
-	OrkaVMPasswordEnvName = "ORKA_VM_PASSWORD"
-	OrkaVMMetadataEnvName = "ORKA_VM_METADATA"
+	OrkaNamespaceEnvName          = "ORKA_NAMESPACE"
+	OrkaVMConfigEnvName           = "ORKA_VM_CONFIG"
+	OrkaVMUsernameEnvName         = "ORKA_VM_USERNAME"
+	OrkaVMPasswordEnvName         = "ORKA_VM_PASSWORD"
+	OrkaVMMetadataEnvName         = "ORKA_VM_METADATA"
+	OrkaVMUserdataEnvName         = "ORKA_VM_USERDATA"
+	OrkaVMUserdataFilePathEnvName = "ORKA_VM_USERDATA_FILE_PATH"
 
 	OrkaEnableNodeIPMappingEnvName = "ORKA_ENABLE_NODE_IP_MAPPING"
 	OrkaNodeIPMappingEnvName       = "ORKA_NODE_IP_MAPPING"

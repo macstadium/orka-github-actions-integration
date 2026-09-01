@@ -1,6 +1,7 @@
 package env
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -40,6 +41,7 @@ type Data struct {
 	OrkaVMUsername string
 	OrkaVMPassword string
 	OrkaVMMetadata string
+	OrkaVMUserdata string
 
 	OrkaEnableNodeIPMapping bool
 	OrkaNodeIPMapping       map[string]string
@@ -85,6 +87,7 @@ func ParseEnv() *Data {
 		OrkaVMUsername: getEnvWithDefault(OrkaVMUsernameEnvName, "admin"),
 		OrkaVMPassword: getEnvWithDefault(OrkaVMPasswordEnvName, "admin"),
 		OrkaVMMetadata: getEnvWithDefault(OrkaVMMetadataEnvName, ""),
+		OrkaVMUserdata: os.Getenv(OrkaVMUserdataEnvName),
 
 		OrkaEnableNodeIPMapping: getBoolEnv(OrkaEnableNodeIPMappingEnvName, false),
 
@@ -155,6 +158,17 @@ func ParseEnv() *Data {
 
 					envData.GitHubAppPrivateKey = string(privateKeyContent)
 				}
+			}
+		}
+	}
+
+	if envData.OrkaVMUserdata == "" {
+		if userdataPath := os.Getenv(OrkaVMUserdataFilePathEnvName); userdataPath != "" {
+			userdataContent, err := os.ReadFile(userdataPath)
+			if err != nil {
+				errors = append(errors, fmt.Sprintf("failed to read the userdata script from %s: %s", OrkaVMUserdataFilePathEnvName, err))
+			} else {
+				envData.OrkaVMUserdata = string(userdataContent)
 			}
 		}
 	}
@@ -279,6 +293,10 @@ func validateEnv(envData *Data) []string {
 
 	if envData.OrkaVMMetadata != "" && !validateMetadata(envData.OrkaVMMetadata) {
 		errors = append(errors, fmt.Sprintf("%s must be formatted as key=value comma separated string", OrkaVMMetadataEnvName))
+	}
+
+	if envData.OrkaVMUserdata != "" && base64.StdEncoding.EncodedLen(len(envData.OrkaVMUserdata)) > maxUserdataEncodedSize {
+		errors = append(errors, fmt.Sprintf("the userdata script exceeds the maximum size of %d bytes when base64-encoded. Provide a smaller script via %s or %s", maxUserdataEncodedSize, OrkaVMUserdataEnvName, OrkaVMUserdataFilePathEnvName))
 	}
 
 	return errors

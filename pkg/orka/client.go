@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -20,20 +21,31 @@ type OrkaService interface {
 
 type OrkaClient struct {
 	envData *env.Data
+	// userdataPath is a private file holding the userdata script. The file
+	// path (not the script content) is passed to orka3, which reads and
+	// base64-encodes it, so the script never appears in command lines or logs.
+	userdataPath string
 }
 
 func (client *OrkaClient) DeployVM(ctx context.Context, namePrefix, vmConfig string) (*OrkaVMDeployResponseModel, error) {
-	args := []string{"vm", "deploy", namePrefix, "--config", vmConfig, "--generate-name", "-o", "json", "--namespace", client.envData.OrkaNamespace}
-	if client.envData.OrkaVMMetadata != "" {
-		args = append(args, "--metadata", client.envData.OrkaVMMetadata)
-	}
-
-	res, err := exec.ExecJSONCommand[[]*OrkaVMDeployResponseModel]("orka3", args)
+	res, err := exec.ExecJSONCommand[[]*OrkaVMDeployResponseModel]("orka3", client.deployArgs(namePrefix, vmConfig))
 	if err != nil {
 		return nil, err
 	}
 
 	return (*res)[0], nil
+}
+
+func (client *OrkaClient) deployArgs(namePrefix, vmConfig string) []string {
+	args := []string{"vm", "deploy", namePrefix, "--config", vmConfig, "--generate-name", "-o", "json", "--namespace", client.envData.OrkaNamespace}
+	if client.envData.OrkaVMMetadata != "" {
+		args = append(args, "--metadata", client.envData.OrkaVMMetadata)
+	}
+	if client.userdataPath != "" {
+		args = append(args, "--userdata", client.userdataPath)
+	}
+
+	return args
 }
 
 func (client *OrkaClient) ListVMs(ctx context.Context, namePrefix string) ([]*OrkaVMInfo, error) {
@@ -95,9 +107,39 @@ func NewOrkaClient(envData *env.Data, ctx context.Context) (*OrkaClient, error) 
 		return nil, err
 	}
 
+	userdataPath := ""
+	if envData.OrkaVMUserdata != "" {
+		deployHelp, err := exec.ExecStringCommand("orka3", []string{"vm", "deploy", "--help"})
+		if err != nil || !strings.Contains(deployHelp, "--userdata") {
+			return nil, fmt.Errorf("the installed orka3 CLI does not support the --userdata flag. Userdata requires orka3 3.7.0 or later; upgrade the CLI or unset %s", env.OrkaVMUserdataEnvName)
+		}
+
+		if userdataPath, err = writeUserdataFile(envData.OrkaVMUserdata); err != nil {
+			return nil, fmt.Errorf("failed to prepare the userdata script: %s", err.Error())
+		}
+	}
+
 	return &OrkaClient{
-		envData: envData,
+		envData:      envData,
+		userdataPath: userdataPath,
 	}, nil
+}
+
+// writeUserdataFile stores the userdata script in a file readable only by the
+// current user, so deploys can reference it by path instead of passing the
+// script content on the orka3 command line.
+func writeUserdataFile(script string) (string, error) {
+	file, err := os.CreateTemp("", "orka-vm-userdata-*.sh")
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	if _, err := file.WriteString(script); err != nil {
+		return "", err
+	}
+
+	return file.Name(), nil
 }
 
 type OrkaTransport struct {
