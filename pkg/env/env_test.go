@@ -1,6 +1,7 @@
 package env
 
 import (
+	"strings"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -29,6 +30,31 @@ var _ = Describe("Env Test", func() {
 		Entry("with invalid string with empty key, should be invalid", "=value1", false),
 		Entry("with invalid string with empty value, should be invalid", "key1=", false),
 		Entry("with invalid string with no equals sign, should be invalid", "key1;value1", false),
+	)
+
+	DescribeTable("when validating the userdata size",
+		func(scriptSize int, expectError bool) {
+			envData := &Data{
+				GitHubURL:      "https://github.com/my-org/my-repo",
+				OrkaURL:        "http://10.221.188.20",
+				OrkaToken:      "token",
+				OrkaVMConfig:   "my-config",
+				OrkaVMUserdata: strings.Repeat("a", scriptSize),
+			}
+
+			errors := validateEnv(envData)
+
+			if expectError {
+				Expect(errors).To(HaveLen(1))
+				Expect(errors[0]).To(ContainSubstring("userdata script exceeds the maximum size"))
+			} else {
+				Expect(errors).To(BeEmpty())
+			}
+		},
+		Entry("with an empty script, should be valid", 0, false),
+		Entry("with a small script, should be valid", 100, false),
+		Entry("with the largest script that encodes to 64KiB, should be valid", 49152, false),
+		Entry("with a script that encodes to over 64KiB, should be invalid", 49153, true),
 	)
 
 	DescribeTable("when detecting an enterprise config URL",
