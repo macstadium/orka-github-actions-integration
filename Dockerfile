@@ -2,6 +2,9 @@ FROM golang:1.25.3 as builder
 
 WORKDIR /workspace
 
+# Android emulator support (ORKA_EMULATOR_CONFIGS) needs a CLI that provides the
+# "orka3 emulator" and "orka3 emulator-config" command groups. Bump this pin before enabling it;
+# the runner fails at startup with a clear message if the CLI or cluster cannot serve emulators.
 ARG ORKA_VERSION=3.1.0
 
 # Make it runnable on a distroless image/without libc

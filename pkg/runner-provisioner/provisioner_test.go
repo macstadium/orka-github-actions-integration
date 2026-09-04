@@ -10,6 +10,7 @@ import (
 	"github.com/macstadium/orka-github-actions-integration/pkg/env"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
+	"github.com/macstadium/orka-github-actions-integration/pkg/orka"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -254,5 +255,122 @@ var _ = Describe("RunnerProvisioner", func() {
 				Expect(mockActions.DeleteRunnerCalls).To(Equal(1))
 			})
 		})
+	})
+})
+
+func relayEmulator(name, config, host string, port int, platform, imageType string, deviceProfile *string) provisionedEmulator {
+	return provisionedEmulator{
+		config: config,
+		emulator: &orka.OrkaEmulatorResponseModel{
+			Name:          name,
+			Status:        orka.EmulatorRunning,
+			Platform:      platform,
+			ImageType:     imageType,
+			DeviceProfile: deviceProfile,
+			RelayIP:       &host,
+			RelayPort:     &port,
+		},
+	}
+}
+
+var _ = Describe("Emulator naming", func() {
+	DescribeTable("derives a deterministic name from the VM and list position",
+		func(vmName string, index int, expected string) {
+			Expect(emulatorName(vmName, index)).To(Equal(expected))
+		},
+		Entry("first emulator is 1-indexed", "my-runner-abc123", 0, "my-runner-abc123-emu-1"),
+		Entry("second emulator follows the list order", "my-runner-abc123", 1, "my-runner-abc123-emu-2"),
+		Entry("tenth emulator is not zero padded", "my-runner-abc123", 9, "my-runner-abc123-emu-10"),
+	)
+
+	It("produces names that are recomputable at cleanup time without any stored state", func() {
+		vmName := "my-runner-abc123"
+		configs := []string{"pixel8-api36", "tablet-api35"}
+
+		names := make([]string, 0, len(configs))
+		for i := range configs {
+			names = append(names, emulatorName(vmName, i))
+		}
+
+		Expect(names).To(Equal([]string{"my-runner-abc123-emu-1", "my-runner-abc123-emu-2"}))
+	})
+})
+
+var _ = Describe("Emulator exports", func() {
+	It("emits nothing when no emulators were provisioned", func() {
+		Expect(buildEmulatorExports(nil)).To(BeNil())
+	})
+
+	It("leaves the runner commands untouched when emulators are disabled", func() {
+		commands := buildCommands("jit", "2.336.0", "admin", nil)
+		Expect(commands).To(HaveLen(len(commands_template)))
+		Expect(commands[0]).To(Equal("set -e"))
+	})
+
+	It("prepends exports ahead of the runner commands", func() {
+		profile := "pixel_8"
+		commands := buildCommands("jit", "2.336.0", "admin", []provisionedEmulator{
+			relayEmulator("vm-emu-1", "pixel8-api36", "192.168.64.1", 15555, "android-36", "google_apis", &profile),
+		})
+
+		Expect(commands[0]).To(Equal("export ORKA_EMULATOR_COUNT='1'"))
+		Expect(commands).To(ContainElement("set -e"))
+	})
+
+	It("exports the indexed variables and the single-emulator aliases", func() {
+		profile := "pixel_8"
+		exports := buildEmulatorExports([]provisionedEmulator{
+			relayEmulator("vm-emu-1", "pixel8-api36", "192.168.64.1", 15555, "android-36", "google_apis", &profile),
+		})
+
+		Expect(exports).To(ContainElements(
+			"export ORKA_EMULATOR_COUNT='1'",
+			"export ORKA_EMULATOR_1_NAME='vm-emu-1'",
+			"export ORKA_EMULATOR_1_CONFIG='pixel8-api36'",
+			"export ORKA_EMULATOR_1_ADB_HOST='192.168.64.1'",
+			"export ORKA_EMULATOR_1_ADB_PORT='15555'",
+			"export ORKA_EMULATOR_1_ADB='192.168.64.1:15555'",
+			"export ORKA_EMULATOR_1_PLATFORM='android-36'",
+			"export ORKA_EMULATOR_1_IMAGE_TYPE='google_apis'",
+			"export ORKA_EMULATOR_1_DEVICE_PROFILE='pixel_8'",
+			"export ORKA_EMULATOR_ADB_HOST='192.168.64.1'",
+			"export ORKA_EMULATOR_ADB_PORT='15555'",
+			"export ORKA_EMULATOR_ADB='192.168.64.1:15555'",
+			"export ORKA_EMULATOR_ADB_TARGETS='192.168.64.1:15555'",
+		))
+	})
+
+	It("exports an empty device profile when the config did not set one", func() {
+		exports := buildEmulatorExports([]provisionedEmulator{
+			relayEmulator("vm-emu-1", "default-api36", "192.168.64.1", 15555, "android-36", "default", nil),
+		})
+
+		Expect(exports).To(ContainElement("export ORKA_EMULATOR_1_DEVICE_PROFILE=''"))
+	})
+
+	It("points the aliases at the first emulator and lists every target", func() {
+		first := "pixel_8"
+		second := "pixel_tablet"
+		exports := buildEmulatorExports([]provisionedEmulator{
+			relayEmulator("vm-emu-1", "pixel8-api36", "192.168.64.1", 15555, "android-36", "google_apis", &first),
+			relayEmulator("vm-emu-2", "tablet-api35", "192.168.64.1", 15557, "android-35", "google_apis", &second),
+		})
+
+		Expect(exports).To(ContainElements(
+			"export ORKA_EMULATOR_COUNT='2'",
+			"export ORKA_EMULATOR_2_ADB='192.168.64.1:15557'",
+			"export ORKA_EMULATOR_2_CONFIG='tablet-api35'",
+			"export ORKA_EMULATOR_ADB='192.168.64.1:15555'",
+			"export ORKA_EMULATOR_ADB_TARGETS='192.168.64.1:15555,192.168.64.1:15557'",
+		))
+	})
+
+	It("quotes values so a cluster-supplied string cannot break out of the command stream", func() {
+		odd := "pixel'8"
+		exports := buildEmulatorExports([]provisionedEmulator{
+			relayEmulator("vm-emu-1", "cfg", "192.168.64.1", 15555, "android-36", "google_apis", &odd),
+		})
+
+		Expect(exports).To(ContainElement(`export ORKA_EMULATOR_1_DEVICE_PROFILE='pixel'\''8'`))
 	})
 })

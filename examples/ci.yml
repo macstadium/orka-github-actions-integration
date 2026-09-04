@@ -11,3 +11,21 @@ jobs:
 
       - name: Run a script
         run: echo "Hello, world!"
+
+  # Requires ORKA_EMULATOR_CONFIGS to be set on the runner. The runner deploys the emulators and
+  # publishes their addresses; the workflow owns connecting to them.
+  android-tests:
+    runs-on: my-github-runner
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Connect to the Orka emulator
+        run: |
+          echo "Connecting to $ORKA_EMULATOR_COUNT emulator(s): $ORKA_EMULATOR_ADB_TARGETS"
+          adb connect "$ORKA_EMULATOR_ADB"
+          adb wait-for-device
+          adb shell 'while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 2; done'
+          adb devices
+
+      - name: Run instrumented tests
+        run: ./gradlew connectedAndroidTest

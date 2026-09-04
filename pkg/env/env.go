@@ -44,6 +44,9 @@ type Data struct {
 	OrkaEnableNodeIPMapping bool
 	OrkaNodeIPMapping       map[string]string
 
+	OrkaEmulatorConfigs       []string
+	OrkaEmulatorDeployTimeout int
+
 	Runners []Runner
 
 	RunnerDeregistrationTimeout      time.Duration
@@ -87,6 +90,12 @@ func ParseEnv() *Data {
 		OrkaVMMetadata: getEnvWithDefault(OrkaVMMetadataEnvName, ""),
 
 		OrkaEnableNodeIPMapping: getBoolEnv(OrkaEnableNodeIPMappingEnvName, false),
+
+		OrkaEmulatorConfigs: getCommaSeparatedEnv(OrkaEmulatorConfigsEnvName),
+		// Deliberately above the CLI's own default of 5. The first deploy of a given platform and
+		// system image on a node blocks on an sdkmanager pull that can exhaust 5 minutes on its own,
+		// before AVD creation and emulator boot.
+		OrkaEmulatorDeployTimeout: getIntEnv(OrkaEmulatorDeployTimeoutEnvName, 10),
 
 		RunnerDeregistrationTimeout:      getDurationEnv(RunnerDeregistrationTimeoutEnvName, 30*time.Second),
 		RunnerDeregistrationPollInterval: getDurationEnv(RunnerDeregistrationPollIntervalEnvName, 2*time.Second),
@@ -228,6 +237,28 @@ func getIntEnv(key string, fallback int) int {
 	return parsed
 }
 
+func getCommaSeparatedEnv(key string) []string {
+	return parseCommaSeparated(os.Getenv(key))
+}
+
+// parseCommaSeparated splits a comma separated value and trims each entry. Empty entries are
+// preserved rather than dropped so validateEnv can reject them: silently accepting "a,,b" would
+// hide a typo in a list whose entries name cluster resources.
+func parseCommaSeparated(value string) []string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+
+	parts := strings.Split(value, ",")
+	entries := make([]string, len(parts))
+	for i, part := range parts {
+		entries[i] = strings.TrimSpace(part)
+	}
+
+	return entries
+}
+
 func getDurationEnv(key string, fallback time.Duration) time.Duration {
 	value := os.Getenv(key)
 
@@ -281,7 +312,23 @@ func validateEnv(envData *Data) []string {
 		errors = append(errors, fmt.Sprintf("%s must be formatted as key=value comma separated string", OrkaVMMetadataEnvName))
 	}
 
+	for i, name := range envData.OrkaEmulatorConfigs {
+		if name == "" {
+			errors = append(errors, fmt.Sprintf("%s has an empty entry at position %d. It must be a comma separated list of existing Android emulator config names, for example 'pixel8-api36,tablet-api35'", OrkaEmulatorConfigsEnvName, i+1))
+		}
+	}
+
+	if envData.EmulatorsEnabled() && envData.OrkaEmulatorDeployTimeout <= 0 {
+		errors = append(errors, fmt.Sprintf("%s must be a positive number of minutes", OrkaEmulatorDeployTimeoutEnvName))
+	}
+
 	return errors
+}
+
+// EmulatorsEnabled reports whether Android emulator pairing is configured. With no emulator configs
+// named, every emulator code path is skipped and the runner behaves exactly as it did before.
+func (data *Data) EmulatorsEnabled() bool {
+	return len(data.OrkaEmulatorConfigs) > 0
 }
 
 func hasAnyGitHubAppEnv(envData *Data) bool {

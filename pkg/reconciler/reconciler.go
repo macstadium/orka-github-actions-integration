@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/env"
@@ -26,15 +27,17 @@ const (
 
 type VMReconciler struct {
 	actionsClient actions.ActionsService
+	orkaClient    orka.OrkaService
 	provisioner   *provisioner.RunnerProvisioner
 	adopt         func(vmName string)
 	envData       *env.Data
 	logger        *zap.SugaredLogger
 }
 
-func NewVMReconciler(actionsClient actions.ActionsService, p *provisioner.RunnerProvisioner, adopt func(string), envData *env.Data) *VMReconciler {
+func NewVMReconciler(actionsClient actions.ActionsService, orkaClient orka.OrkaService, p *provisioner.RunnerProvisioner, adopt func(string), envData *env.Data) *VMReconciler {
 	return &VMReconciler{
 		actionsClient: actionsClient,
+		orkaClient:    orkaClient,
 		provisioner:   p,
 		adopt:         adopt,
 		envData:       envData,
@@ -44,7 +47,13 @@ func NewVMReconciler(actionsClient actions.ActionsService, p *provisioner.Runner
 
 // VMs must be captured before message processing starts to avoid reconciling
 // VMs provisioned by the current process.
-func (r *VMReconciler) ReconcileVMs(ctx context.Context, vms []*orka.OrkaVMInfo) {
+func (r *VMReconciler) ReconcileVMs(ctx context.Context, vms []*orka.OrkaVMInfo, scaleSetName string) {
+	// Runs even with no VMs to reconcile: an emulator can outlive every VM in the scale set, which
+	// is exactly the state this sweep exists to clear.
+	if r.envData.EmulatorsEnabled() {
+		r.sweepOrphanedEmulators(ctx, scaleSetName)
+	}
+
 	if len(vms) == 0 {
 		return
 	}
@@ -55,6 +64,56 @@ func (r *VMReconciler) ReconcileVMs(ctx context.Context, vms []*orka.OrkaVMInfo)
 	}
 
 	r.logger.Infof("reconciliation: completed")
+}
+
+// sweepOrphanedEmulators deletes emulators whose paired VM belonged to this scale set but no longer
+// exists. Deleting a VM garbage-collects its emulators through the owner reference, so this covers
+// only the gap that leaves behind: on a deploy timeout the CLI abandons the emulator record rather
+// than removing it, and the process may have exited before cleanup ran.
+//
+// This runs before VM reconciliation deliberately. VMs that reconciliation is about to delete still
+// exist at this point, so their emulators are not treated as orphans and are cleaned up by the
+// owner-reference cascade instead.
+func (r *VMReconciler) sweepOrphanedEmulators(ctx context.Context, scaleSetName string) {
+	emulators, err := r.orkaClient.ListEmulators(ctx)
+	if err != nil {
+		r.logger.Warnf("reconciliation: unable to list emulators, skipping orphan sweep: %v", err)
+		return
+	}
+
+	if len(emulators) == 0 {
+		return
+	}
+
+	vms, err := r.orkaClient.ListVMs(ctx, scaleSetName)
+	if err != nil {
+		r.logger.Warnf("reconciliation: unable to list VMs, skipping emulator orphan sweep: %v", err)
+		return
+	}
+
+	live := make(map[string]bool, len(vms))
+	for _, vm := range vms {
+		live[vm.Name] = true
+	}
+
+	orphaned := make([]string, 0, len(emulators))
+	for _, emulator := range emulators {
+		// Scoped by the scale set prefix so we never touch emulators belonging to another runner
+		// or to a non-CI workload sharing the namespace.
+		if strings.HasPrefix(emulator.VM, scaleSetName) && !live[emulator.VM] {
+			orphaned = append(orphaned, emulator.Name)
+		}
+	}
+
+	if len(orphaned) == 0 {
+		return
+	}
+
+	r.logger.Infof("reconciliation: deleting %d orphaned emulator(s) whose paired VM is gone: %s", len(orphaned), strings.Join(orphaned, ", "))
+
+	if err := r.orkaClient.DeleteEmulator(ctx, orphaned...); err != nil {
+		r.logger.Warnf("reconciliation: failed to delete orphaned emulator(s): %v", err)
+	}
 }
 
 func (r *VMReconciler) reconcileVM(ctx context.Context, vm *orka.OrkaVMInfo) {
