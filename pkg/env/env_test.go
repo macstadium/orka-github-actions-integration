@@ -14,6 +14,57 @@ func TestEnv(t *testing.T) {
 
 var _ = Describe("Env Test", func() {
 
+	DescribeTable("when parsing a comma separated env",
+		func(input string, expected []string) {
+			Expect(parseCommaSeparated(input)).To(Equal(expected))
+		},
+		Entry("with a single name, should be one entry", "pixel8-api36", []string{"pixel8-api36"}),
+		Entry("with several names, should keep order", "pixel8-api36,tablet-api35", []string{"pixel8-api36", "tablet-api35"}),
+		Entry("with spaces around names, should trim them", " pixel8-api36 , tablet-api35 ", []string{"pixel8-api36", "tablet-api35"}),
+		Entry("with a repeated name, should keep both entries", "pixel8-api36,pixel8-api36", []string{"pixel8-api36", "pixel8-api36"}),
+		Entry("with an empty string, should be nil so the feature stays off", "", nil),
+		Entry("with only whitespace, should be nil so the feature stays off", "   ", nil),
+		Entry("with a trailing comma, should keep the empty entry for validation to reject", "pixel8-api36,", []string{"pixel8-api36", ""}),
+		Entry("with an empty middle entry, should keep it for validation to reject", "a,,b", []string{"a", "", "b"}),
+	)
+
+	DescribeTable("when validating emulator configs",
+		func(configs []string, timeout int, expectError bool) {
+			envData := &Data{
+				GitHubURL:                 "https://github.com/my-org",
+				OrkaURL:                   "http://10.0.0.1",
+				OrkaToken:                 "token",
+				OrkaVMConfig:              "my-vm-config",
+				OrkaEmulatorConfigs:       configs,
+				OrkaEmulatorDeployTimeout: timeout,
+			}
+
+			errs := validateEnv(envData)
+
+			if expectError {
+				Expect(errs).ToNot(BeEmpty())
+			} else {
+				Expect(errs).To(BeEmpty())
+			}
+		},
+		Entry("with no configs, should be valid and the feature off", nil, 10, false),
+		Entry("with one config, should be valid", []string{"pixel8-api36"}, 10, false),
+		Entry("with several configs, should be valid", []string{"pixel8-api36", "tablet-api35"}, 10, false),
+		Entry("with an empty entry, should be invalid", []string{"pixel8-api36", ""}, 10, true),
+		Entry("with a zero timeout while enabled, should be invalid", []string{"pixel8-api36"}, 0, true),
+		Entry("with a negative timeout while enabled, should be invalid", []string{"pixel8-api36"}, -1, true),
+		Entry("with a zero timeout while disabled, should be valid", nil, 0, false),
+	)
+
+	DescribeTable("when reporting whether emulators are enabled",
+		func(configs []string, expected bool) {
+			Expect((&Data{OrkaEmulatorConfigs: configs}).EmulatorsEnabled()).To(Equal(expected))
+		},
+		Entry("with no configs, should be disabled", nil, false),
+		Entry("with an empty slice, should be disabled", []string{}, false),
+		Entry("with one config, should be enabled", []string{"pixel8-api36"}, true),
+	)
+
 	DescribeTable("when validating the metadata env",
 		func(input string, expected bool) {
 			Expect(validateMetadata(input)).To(Equal(expected))

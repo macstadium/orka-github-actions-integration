@@ -23,6 +23,9 @@ const (
 	OrkaEnableNodeIPMappingEnvName = "ORKA_ENABLE_NODE_IP_MAPPING"
 	OrkaNodeIPMappingEnvName       = "ORKA_NODE_IP_MAPPING"
 
+	OrkaEmulatorConfigsEnvName       = "ORKA_EMULATOR_CONFIGS"
+	OrkaEmulatorDeployTimeoutEnvName = "ORKA_EMULATOR_DEPLOY_TIMEOUT"
+
 	RunnersEnvName = "RUNNERS"
 
 	RunnerDeregistrationTimeoutEnvName      = "RUNNER_DEREGISTRATION_TIMEOUT"

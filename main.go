@@ -155,8 +155,8 @@ func main() {
 	runnerMessageProcessor := runners.NewRunnerMessageProcessor(ctx, runnerManager, runnerProvisioner, vmTracker, runnerScaleSet)
 
 	if envData.EnableReconciliation {
-		vmReconciler := reconciler.NewVMReconciler(actionsClient, runnerProvisioner, runnerMessageProcessor.AdoptVM, envData)
-		go vmReconciler.ReconcileVMs(ctx, existingVMs)
+		vmReconciler := reconciler.NewVMReconciler(actionsClient, orkaClient, runnerProvisioner, runnerMessageProcessor.AdoptVM, envData)
+		go vmReconciler.ReconcileVMs(ctx, existingVMs, runnerScaleSet.Name)
 	}
 
 	run(ctx, runnerMessageProcessor, runnerScaleSet, logger)
