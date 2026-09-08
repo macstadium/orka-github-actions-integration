@@ -41,7 +41,7 @@ func (m *MockOrkaClient) ListVMs(ctx context.Context, namePrefix string) ([]*ork
 	return nil, nil
 }
 
-func (m *MockOrkaClient) DeployEmulator(ctx context.Context, name, vmName, emulatorConfig string) (*orka.OrkaEmulatorResponseModel, error) {
+func (m *MockOrkaClient) DeployEmulator(ctx context.Context, name, vmName string, spec orka.EmulatorSpec) (*orka.OrkaEmulatorResponseModel, error) {
 	return nil, nil
 }
 

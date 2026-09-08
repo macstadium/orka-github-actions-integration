@@ -105,3 +105,43 @@ type OrkaEmulatorConfigResponseModel struct {
 	Platform  string `json:"platform,omitempty"`
 	ImageType string `json:"imageType,omitempty"`
 }
+
+// EmulatorSpec says what to deploy. Config names an AndroidEmulatorConfig and is preferred, since
+// the cluster then owns the platform, system image, device profile, and sizing. The inline fields
+// are the fallback for clusters whose CLI predates named configs, and can be dropped once every
+// cluster we target supports them.
+type EmulatorSpec struct {
+	Config string
+
+	Platform      string
+	ImageType     string
+	DeviceProfile string
+}
+
+// deployArgs renders the spec as flags for 'orka3 emulator deploy'.
+func (spec EmulatorSpec) deployArgs() []string {
+	if spec.Config != "" {
+		return []string{"--config", spec.Config}
+	}
+
+	args := []string{"--platform", spec.Platform, "--image-type", spec.ImageType}
+	if spec.DeviceProfile != "" {
+		args = append(args, "--device-profile", spec.DeviceProfile)
+	}
+
+	return args
+}
+
+// Label identifies the spec in logs and in the job-facing ORKA_EMULATOR_<n>_CONFIG variable: the
+// config name where there is one, otherwise the inline values that stand in for it.
+func (spec EmulatorSpec) Label() string {
+	if spec.Config != "" {
+		return spec.Config
+	}
+
+	if spec.DeviceProfile != "" {
+		return fmt.Sprintf("%s/%s/%s", spec.Platform, spec.ImageType, spec.DeviceProfile)
+	}
+
+	return fmt.Sprintf("%s/%s", spec.Platform, spec.ImageType)
+}

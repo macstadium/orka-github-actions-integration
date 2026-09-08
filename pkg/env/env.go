@@ -22,6 +22,15 @@ type Runner struct {
 	Id   int
 }
 
+// EmulatorSpec describes an emulator inline, for clusters that cannot yet deploy from a named
+// AndroidEmulatorConfig. Prefer ORKA_EMULATOR_CONFIGS where the cluster supports it; this exists so
+// the feature is usable before that lands, and should be removed once it has.
+type EmulatorSpec struct {
+	Platform      string `json:"platform"`
+	ImageType     string `json:"imageType"`
+	DeviceProfile string `json:"deviceProfile,omitempty"`
+}
+
 type Data struct {
 	GitHubAppID             int64
 	GitHubAppInstallationID int64
@@ -45,6 +54,7 @@ type Data struct {
 	OrkaNodeIPMapping       map[string]string
 
 	OrkaEmulatorConfigs       []string
+	OrkaEmulators             []EmulatorSpec
 	OrkaEmulatorDeployTimeout int
 
 	Runners []Runner
@@ -176,6 +186,12 @@ func ParseEnv() *Data {
 
 		if len(envData.OrkaNodeIPMapping) == 0 {
 			errors = append(errors, "please provide at least one node IP mapping in order to use public IPs functionality")
+		}
+	}
+
+	if raw := strings.TrimSpace(os.Getenv(OrkaEmulatorsEnvName)); raw != "" {
+		if err := json.Unmarshal([]byte(raw), &envData.OrkaEmulators); err != nil {
+			errors = append(errors, fmt.Sprintf(`unable to parse the %s environment variable as a JSON array of emulator specs. Example: '[{"platform":"android-36","imageType":"google_apis","deviceProfile":"pixel_8"}]'`, OrkaEmulatorsEnvName))
 		}
 	}
 
@@ -318,6 +334,16 @@ func validateEnv(envData *Data) []string {
 		}
 	}
 
+	if len(envData.OrkaEmulatorConfigs) > 0 && len(envData.OrkaEmulators) > 0 {
+		errors = append(errors, fmt.Sprintf("%s and %s are both set, which is ambiguous. Use %s where the cluster supports named emulator configs, otherwise use %s", OrkaEmulatorConfigsEnvName, OrkaEmulatorsEnvName, OrkaEmulatorConfigsEnvName, OrkaEmulatorsEnvName))
+	}
+
+	for i, emulator := range envData.OrkaEmulators {
+		if emulator.Platform == "" || emulator.ImageType == "" {
+			errors = append(errors, fmt.Sprintf("%s entry %d must set both platform and imageType, for example {\"platform\":\"android-36\",\"imageType\":\"google_apis\"}", OrkaEmulatorsEnvName, i+1))
+		}
+	}
+
 	if envData.EmulatorsEnabled() && envData.OrkaEmulatorDeployTimeout <= 0 {
 		errors = append(errors, fmt.Sprintf("%s must be a positive number of minutes", OrkaEmulatorDeployTimeoutEnvName))
 	}
@@ -328,7 +354,16 @@ func validateEnv(envData *Data) []string {
 // EmulatorsEnabled reports whether Android emulator pairing is configured. With no emulator configs
 // named, every emulator code path is skipped and the runner behaves exactly as it did before.
 func (data *Data) EmulatorsEnabled() bool {
-	return len(data.OrkaEmulatorConfigs) > 0
+	return len(data.OrkaEmulatorConfigs) > 0 || len(data.OrkaEmulators) > 0
+}
+
+// EmulatorCount is how many emulators are paired with each runner VM.
+func (data *Data) EmulatorCount() int {
+	if len(data.OrkaEmulatorConfigs) > 0 {
+		return len(data.OrkaEmulatorConfigs)
+	}
+
+	return len(data.OrkaEmulators)
 }
 
 func hasAnyGitHubAppEnv(envData *Data) bool {

@@ -88,3 +88,32 @@ var _ = Describe("Orka Test", func() {
 		})
 	})
 })
+
+var _ = Describe("Emulator spec", func() {
+	DescribeTable("renders deploy flags",
+		func(spec EmulatorSpec, expected []string) {
+			Expect(spec.deployArgs()).To(Equal(expected))
+		},
+		Entry("a named config uses --config alone",
+			EmulatorSpec{Config: "pixel8-api36"},
+			[]string{"--config", "pixel8-api36"}),
+		Entry("an inline spec passes platform and image type",
+			EmulatorSpec{Platform: "android-36", ImageType: "google_apis"},
+			[]string{"--platform", "android-36", "--image-type", "google_apis"}),
+		Entry("an inline spec adds the device profile when set",
+			EmulatorSpec{Platform: "android-36", ImageType: "google_apis", DeviceProfile: "pixel_8"},
+			[]string{"--platform", "android-36", "--image-type", "google_apis", "--device-profile", "pixel_8"}),
+		Entry("a named config wins over inline fields",
+			EmulatorSpec{Config: "pixel8-api36", Platform: "android-36", ImageType: "google_apis"},
+			[]string{"--config", "pixel8-api36"}),
+	)
+
+	DescribeTable("labels itself for logs and the job environment",
+		func(spec EmulatorSpec, expected string) {
+			Expect(spec.Label()).To(Equal(expected))
+		},
+		Entry("as the config name when there is one", EmulatorSpec{Config: "pixel8-api36"}, "pixel8-api36"),
+		Entry("as platform/imageType inline", EmulatorSpec{Platform: "android-36", ImageType: "google_apis"}, "android-36/google_apis"),
+		Entry("including the device profile when set", EmulatorSpec{Platform: "android-36", ImageType: "google_apis", DeviceProfile: "pixel_8"}, "android-36/google_apis/pixel_8"),
+	)
+})

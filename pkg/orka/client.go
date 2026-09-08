@@ -18,7 +18,7 @@ type OrkaService interface {
 	DeleteVM(ctx context.Context, name string) error
 	ListVMs(ctx context.Context, namePrefix string) ([]*OrkaVMInfo, error)
 
-	DeployEmulator(ctx context.Context, name, vmName, emulatorConfig string) (*OrkaEmulatorResponseModel, error)
+	DeployEmulator(ctx context.Context, name, vmName string, spec EmulatorSpec) (*OrkaEmulatorResponseModel, error)
 	DeleteEmulator(ctx context.Context, names ...string) error
 	ListEmulators(ctx context.Context) ([]*OrkaEmulatorResponseModel, error)
 	ListEmulatorConfigs(ctx context.Context) ([]*OrkaEmulatorConfigResponseModel, error)
@@ -61,15 +61,14 @@ func (client *OrkaClient) ListVMs(ctx context.Context, namePrefix string) ([]*Or
 // config. The config owns the platform, system image, device profile, and sizing, so this only
 // passes a name through. The call blocks until the emulator is running, fails, or the timeout
 // elapses, which can take minutes on a node that has not yet pulled the system image.
-func (client *OrkaClient) DeployEmulator(ctx context.Context, name, vmName, emulatorConfig string) (*OrkaEmulatorResponseModel, error) {
-	args := []string{
-		"emulator", "deploy", name,
-		"--vm", vmName,
-		"--config", emulatorConfig,
+func (client *OrkaClient) DeployEmulator(ctx context.Context, name, vmName string, spec EmulatorSpec) (*OrkaEmulatorResponseModel, error) {
+	args := []string{"emulator", "deploy", name, "--vm", vmName}
+	args = append(args, spec.deployArgs()...)
+	args = append(args,
 		"--timeout", strconv.Itoa(client.envData.OrkaEmulatorDeployTimeout),
 		"-o", "json",
 		"--namespace", client.envData.OrkaNamespace,
-	}
+	)
 
 	res, err := exec.ExecJSONCommand[[]*OrkaEmulatorResponseModel]("orka3", args)
 	if err != nil {
@@ -126,6 +125,16 @@ func (client *OrkaClient) ListEmulatorConfigs(ctx context.Context) ([]*OrkaEmula
 	}
 
 	return *res, nil
+}
+
+// verifyEmulatorSupport fails startup when the cluster or the bundled CLI cannot serve emulators.
+// Used for the inline path, which needs the emulator command group but not named configs.
+func (client *OrkaClient) verifyEmulatorSupport(ctx context.Context) error {
+	if _, err := client.ListEmulators(ctx); err != nil {
+		return fmt.Errorf("unable to list Android emulators, which %s requires. The cluster and the bundled orka3 CLI must both support Android emulators. More info: %s", env.OrkaEmulatorsEnvName, err.Error())
+	}
+
+	return nil
 }
 
 // verifyEmulatorConfigs fails startup when the cluster cannot serve emulators at all, or when a
@@ -219,8 +228,12 @@ func NewOrkaClient(envData *env.Data, ctx context.Context) (*OrkaClient, error) 
 		envData: envData,
 	}
 
-	if envData.EmulatorsEnabled() {
+	if len(envData.OrkaEmulatorConfigs) > 0 {
 		if err := orkaClient.verifyEmulatorConfigs(ctx); err != nil {
+			return nil, err
+		}
+	} else if len(envData.OrkaEmulators) > 0 {
+		if err := orkaClient.verifyEmulatorSupport(ctx); err != nil {
 			return nil, err
 		}
 	}
