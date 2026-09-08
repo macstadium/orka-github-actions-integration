@@ -111,12 +111,36 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) (*orka.VMComman
 	return vmCommandExecutor, commands, nil
 }
 
-// provisionedEmulator pairs a deployed emulator with the emulator config that produced it. The
-// deploy response resolves platform, image type, and device profile from the config but does not
-// echo the config name back, so it is carried alongside.
+// provisionedEmulator pairs a deployed emulator with the spec that produced it. The deploy response
+// resolves platform, image type, and device profile, but does not echo back which config or inline
+// spec was asked for, so it is carried alongside.
 type provisionedEmulator struct {
 	config   string
 	emulator *orka.OrkaEmulatorResponseModel
+}
+
+// emulatorSpecs resolves the configured emulators into deploy specs. Named configs win where both
+// are somehow present, though validateEnv rejects that combination before we get here.
+func (p *RunnerProvisioner) emulatorSpecs() []orka.EmulatorSpec {
+	if len(p.envData.OrkaEmulatorConfigs) > 0 {
+		specs := make([]orka.EmulatorSpec, 0, len(p.envData.OrkaEmulatorConfigs))
+		for _, name := range p.envData.OrkaEmulatorConfigs {
+			specs = append(specs, orka.EmulatorSpec{Config: name})
+		}
+
+		return specs
+	}
+
+	specs := make([]orka.EmulatorSpec, 0, len(p.envData.OrkaEmulators))
+	for _, emulator := range p.envData.OrkaEmulators {
+		specs = append(specs, orka.EmulatorSpec{
+			Platform:      emulator.Platform,
+			ImageType:     emulator.ImageType,
+			DeviceProfile: emulator.DeviceProfile,
+		})
+	}
+
+	return specs
 }
 
 // emulatorName is the deterministic name of the nth emulator (1-indexed) paired with a VM. Deriving
@@ -131,28 +155,33 @@ func emulatorName(vmName string, index int) string {
 // is safe because the operator's port allocator holds a pending reservation for each console port
 // until the pod is listable; deploying in sequence would instead cost N times the deploy latency.
 func (p *RunnerProvisioner) deployEmulators(ctx context.Context, vmName string) ([]provisionedEmulator, error) {
-	configs := p.envData.OrkaEmulatorConfigs
-	if len(configs) == 0 {
+	specs := p.emulatorSpecs()
+	if len(specs) == 0 {
 		return nil, nil
 	}
 
-	p.logger.Infof("deploying %d Android emulator(s) for VM %s from config(s) %s", len(configs), vmName, strings.Join(configs, ", "))
+	labels := make([]string, 0, len(specs))
+	for _, spec := range specs {
+		labels = append(labels, spec.Label())
+	}
+
+	p.logger.Infof("deploying %d Android emulator(s) for VM %s: %s", len(specs), vmName, strings.Join(labels, ", "))
 
 	var wg sync.WaitGroup
-	provisioned := make([]provisionedEmulator, len(configs))
-	failures := make([]error, len(configs))
+	provisioned := make([]provisionedEmulator, len(specs))
+	failures := make([]error, len(specs))
 
-	for i, config := range configs {
+	for i, spec := range specs {
 		wg.Add(1)
 
-		go func(index int, emulatorConfig string) {
+		go func(index int, emulatorSpec orka.EmulatorSpec) {
 			defer wg.Done()
 
 			name := emulatorName(vmName, index)
 
-			emulator, err := p.orkaClient.DeployEmulator(ctx, name, vmName, emulatorConfig)
+			emulator, err := p.orkaClient.DeployEmulator(ctx, name, vmName, emulatorSpec)
 			if err != nil {
-				failures[index] = fmt.Errorf("emulator %s from config %s: %w", name, emulatorConfig, err)
+				failures[index] = fmt.Errorf("emulator %s (%s): %w", name, emulatorSpec.Label(), err)
 				return
 			}
 
@@ -160,12 +189,12 @@ func (p *RunnerProvisioner) deployEmulators(ctx context.Context, vmName string) 
 			// job inside the VM can reach it, so treat this as a provisioning failure rather than
 			// exporting an empty address the workflow cannot act on.
 			if !emulator.HasRelay() {
-				failures[index] = fmt.Errorf("emulator %s from config %s reported status %s with no relay address", name, emulatorConfig, emulator.Status)
+				failures[index] = fmt.Errorf("emulator %s (%s) reported status %s with no relay address", name, emulatorSpec.Label(), emulator.Status)
 				return
 			}
 
-			provisioned[index] = provisionedEmulator{config: emulatorConfig, emulator: emulator}
-		}(i, config)
+			provisioned[index] = provisionedEmulator{config: emulatorSpec.Label(), emulator: emulator}
+		}(i, spec)
 	}
 
 	wg.Wait()
@@ -190,8 +219,8 @@ func (p *RunnerProvisioner) deleteEmulators(ctx context.Context, vmName string) 
 		return
 	}
 
-	names := make([]string, 0, len(p.envData.OrkaEmulatorConfigs))
-	for i := range p.envData.OrkaEmulatorConfigs {
+	names := make([]string, 0, p.envData.EmulatorCount())
+	for i := 0; i < p.envData.EmulatorCount(); i++ {
 		names = append(names, emulatorName(vmName, i))
 	}
 

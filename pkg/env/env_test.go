@@ -97,3 +97,58 @@ var _ = Describe("Env Test", func() {
 		Entry("with an empty string, should not be an enterprise", "", false),
 	)
 })
+
+var _ = Describe("Emulator env", func() {
+	baseData := func() *Data {
+		return &Data{
+			GitHubURL:                 "https://github.com/my-org",
+			OrkaURL:                   "http://10.0.0.1",
+			OrkaToken:                 "token",
+			OrkaVMConfig:              "my-vm-config",
+			OrkaEmulatorDeployTimeout: 10,
+		}
+	}
+
+	It("rejects setting both the config list and the inline list", func() {
+		data := baseData()
+		data.OrkaEmulatorConfigs = []string{"pixel8-api36"}
+		data.OrkaEmulators = []EmulatorSpec{{Platform: "android-36", ImageType: "google_apis"}}
+
+		Expect(validateEnv(data)).ToNot(BeEmpty())
+	})
+
+	It("accepts the inline list on its own", func() {
+		data := baseData()
+		data.OrkaEmulators = []EmulatorSpec{{Platform: "android-36", ImageType: "google_apis", DeviceProfile: "pixel_8"}}
+
+		Expect(validateEnv(data)).To(BeEmpty())
+	})
+
+	DescribeTable("requires platform and image type on every inline entry",
+		func(spec EmulatorSpec, valid bool) {
+			data := baseData()
+			data.OrkaEmulators = []EmulatorSpec{spec}
+
+			if valid {
+				Expect(validateEnv(data)).To(BeEmpty())
+			} else {
+				Expect(validateEnv(data)).ToNot(BeEmpty())
+			}
+		},
+		Entry("with both set, should be valid", EmulatorSpec{Platform: "android-36", ImageType: "google_apis"}, true),
+		Entry("with no platform, should be invalid", EmulatorSpec{ImageType: "google_apis"}, false),
+		Entry("with no image type, should be invalid", EmulatorSpec{Platform: "android-36"}, false),
+		Entry("with neither, should be invalid", EmulatorSpec{DeviceProfile: "pixel_8"}, false),
+	)
+
+	DescribeTable("counts emulators from whichever list is in use",
+		func(configs []string, inline []EmulatorSpec, expected int, enabled bool) {
+			data := &Data{OrkaEmulatorConfigs: configs, OrkaEmulators: inline}
+			Expect(data.EmulatorCount()).To(Equal(expected))
+			Expect(data.EmulatorsEnabled()).To(Equal(enabled))
+		},
+		Entry("with neither set", nil, nil, 0, false),
+		Entry("with two named configs", []string{"a", "b"}, nil, 2, true),
+		Entry("with one inline spec", nil, []EmulatorSpec{{Platform: "android-36", ImageType: "google_apis"}}, 1, true),
+	)
+})
