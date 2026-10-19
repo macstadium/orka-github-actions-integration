@@ -18,13 +18,14 @@ RUN set -eux \
 
 COPY . .
 
-RUN make build
+RUN make build build-fleet
 
 FROM alpine:latest
 
 WORKDIR /
 
 COPY --from=builder /workspace/bin/app /app
+COPY --from=builder /workspace/bin/spike-fleet /spike-fleet
 COPY --from=builder /usr/local/bin/orka3 /usr/local/bin/orka3
 
 RUN addgroup -S appgroup && adduser -S orka -G appgroup
@@ -34,4 +35,5 @@ USER orka
 # We need to export this environment variable here to ensure that the runner can be automatically deployed into a Kubernetes cluster.
 ENV KUBECONFIG=/home/orka/.kube/config
 
-ENTRYPOINT ["/app"]
+# Spike: run the multi-scale-set controller by default; --entrypoint /app runs the single-set flow.
+ENTRYPOINT ["/spike-fleet"]
