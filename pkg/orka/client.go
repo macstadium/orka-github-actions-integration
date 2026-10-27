@@ -12,6 +12,10 @@ import (
 	"github.com/macstadium/orka-github-actions-integration/pkg/exec"
 )
 
+// cliBinary is the Orka CLI executable. Orka 4.0 renamed it from orka3 to orka.
+// The container image installs it as orka, with an orka3 symlink.
+const cliBinary = "orka"
+
 type OrkaService interface {
 	DeployVM(ctx context.Context, namePrefix, vmConfig string) (*OrkaVMDeployResponseModel, error)
 	DeleteVM(ctx context.Context, name string) error
@@ -28,7 +32,7 @@ func (client *OrkaClient) DeployVM(ctx context.Context, namePrefix, vmConfig str
 		args = append(args, "--metadata", client.envData.OrkaVMMetadata)
 	}
 
-	res, err := exec.ExecJSONCommand[[]*OrkaVMDeployResponseModel]("orka3", args)
+	res, err := exec.ExecJSONCommand[[]*OrkaVMDeployResponseModel](cliBinary, args)
 	if err != nil {
 		return nil, err
 	}
@@ -37,7 +41,7 @@ func (client *OrkaClient) DeployVM(ctx context.Context, namePrefix, vmConfig str
 }
 
 func (client *OrkaClient) ListVMs(ctx context.Context, namePrefix string) ([]*OrkaVMInfo, error) {
-	res, err := exec.ExecJSONCommand[[]*OrkaVMInfo]("orka3", []string{"vm", "list", "--namespace", client.envData.OrkaNamespace, "-o", "json"})
+	res, err := exec.ExecJSONCommand[[]*OrkaVMInfo](cliBinary, []string{"vm", "list", "--namespace", client.envData.OrkaNamespace, "-o", "json"})
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +56,7 @@ func (client *OrkaClient) ListVMs(ctx context.Context, namePrefix string) ([]*Or
 }
 
 func (client *OrkaClient) DeleteVM(ctx context.Context, name string) error {
-	out, err := exec.ExecStringCommand("orka3", []string{"vm", "delete", name, "--namespace", client.envData.OrkaNamespace})
+	out, err := exec.ExecStringCommand(cliBinary, []string{"vm", "delete", name, "--namespace", client.envData.OrkaNamespace})
 	if out == fmt.Sprintf("Successfully deleted vm %s", name) {
 		return nil
 	}
@@ -62,7 +66,7 @@ func (client *OrkaClient) DeleteVM(ctx context.Context, name string) error {
 
 func NewOrkaClient(envData *env.Data, ctx context.Context) (*OrkaClient, error) {
 	// This request is designed to fail quickly if there is no connectivity to the cluster.
-	// The orka3 user set-token operation may take up to ~1 minute to fail, which is excessive.
+	// The orka user set-token operation may take up to ~1 minute to fail, which is excessive.
 	client := &http.Client{
 		Transport: &OrkaTransport{
 			Token: envData.OrkaToken,
@@ -74,19 +78,19 @@ func NewOrkaClient(envData *env.Data, ctx context.Context) (*OrkaClient, error) 
 		return nil, fmt.Errorf("failed to connect to the Orka cluster: %s", err.Error())
 	}
 
-	_, err = exec.ExecStringCommand("orka3", []string{"config", "set", "--api-url", envData.OrkaURL})
+	_, err = exec.ExecStringCommand(cliBinary, []string{"config", "set", "--api-url", envData.OrkaURL})
 	if err != nil {
 		return nil, err
 	}
 
-	_, err = exec.ExecStringCommand("orka3", []string{"user", "set-token", envData.OrkaToken})
+	_, err = exec.ExecStringCommand(cliBinary, []string{"user", "set-token", envData.OrkaToken})
 	if err != nil {
 		return nil, err
 	}
 
 	// The purpose of this call is to check the permissions of the provided token.
 	// If the command fails with an "Unauthorized" error, it indicates that the provided token is not valid.
-	_, err = exec.ExecStringCommand("orka3", []string{"node", "list", "--namespace", envData.OrkaNamespace})
+	_, err = exec.ExecStringCommand(cliBinary, []string{"node", "list", "--namespace", envData.OrkaNamespace})
 	if err != nil {
 		if strings.Contains(err.Error(), "Unauthorized") {
 			return nil, fmt.Errorf("the provided token is not valid. Please provide a valid token")

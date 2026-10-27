@@ -88,7 +88,7 @@ jobs:
           tags: ${{ steps.create_tag.outputs.tags }}
           platforms: linux/amd64,linux/arm64
           build-args: |
-            ORKA_VERSION=3.2.0
+            ORKA_VERSION=4.0.0
           push: true
           provenance: false
         env:
