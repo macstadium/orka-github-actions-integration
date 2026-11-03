@@ -12,20 +12,32 @@ jobs:
       - name: Run a script
         run: echo "Hello, world!"
 
-  # Requires ORKA_EMULATOR_CONFIGS to be set on the runner. The runner deploys the emulators and
+  # Requires Android emulator configs named after the runner's ORKA_VM_CONFIG, for example
+  # my-vm-config-emulator and my-vm-config-emulator-tablet. The runner deploys the emulators and
   # publishes their addresses; the workflow owns connecting to them.
   android-tests:
     runs-on: my-github-runner
     steps:
       - uses: actions/checkout@v3
 
-      - name: Connect to the Orka emulator
+      - name: Connect to the Orka emulators
         run: |
           echo "Connecting to $ORKA_EMULATOR_COUNT emulator(s): $ORKA_EMULATOR_ADB_TARGETS"
-          adb connect "$ORKA_EMULATOR_ADB"
-          adb wait-for-device
-          adb shell 'while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 2; done'
+          for target in ${ORKA_EMULATOR_ADB_TARGETS//,/ }; do
+            adb connect "$target"
+            adb -s "$target" wait-for-device
+            adb -s "$target" shell 'while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 2; done'
+          done
           adb devices
+
+      # Role aliases address an emulator by its config suffix rather than its position. They come
+      # from the runner's environment, which the env expression context cannot see, so test them in
+      # the shell rather than in an if: condition.
+      - name: Check the tablet emulator
+        run: |
+          if [ -n "${ORKA_EMULATOR_TABLET_ADB:-}" ]; then
+            adb -s "$ORKA_EMULATOR_TABLET_ADB" shell getprop ro.product.model
+          fi
 
       - name: Run instrumented tests
         run: ./gradlew connectedAndroidTest
