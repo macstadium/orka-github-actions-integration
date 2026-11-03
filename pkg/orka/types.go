@@ -65,7 +65,7 @@ const (
 )
 
 // OrkaEmulatorResponseModel is one element of the JSON array returned by both
-// 'orka3 emulator deploy -o json' and 'orka3 emulator list -o json'. Platform, image type, and
+// 'orka emulator deploy -o json' and 'orka emulator list -o json'. Platform, image type, and
 // device profile come back resolved from the emulator config that produced the emulator.
 //
 // Note the relay key is "relayIp" with a lowercase p, which differs from the CRD's relayIP field.
@@ -98,7 +98,7 @@ func (emulator *OrkaEmulatorResponseModel) ADBTarget() string {
 	return fmt.Sprintf("%s:%d", *emulator.RelayIP, *emulator.RelayPort)
 }
 
-// OrkaEmulatorConfigResponseModel is one element of 'orka3 emulator-config list -o json'. Only the
+// OrkaEmulatorConfigResponseModel is one element of 'orka emulator-config list -o json'. Only the
 // name is used, to validate the configured names at startup.
 type OrkaEmulatorConfigResponseModel struct {
 	Name      string `json:"name"`
@@ -118,7 +118,7 @@ type EmulatorSpec struct {
 	DeviceProfile string
 }
 
-// deployArgs renders the spec as flags for 'orka3 emulator deploy'.
+// deployArgs renders the spec as flags for 'orka emulator deploy'.
 func (spec EmulatorSpec) deployArgs() []string {
 	if spec.Config != "" {
 		return []string{"--config", spec.Config}

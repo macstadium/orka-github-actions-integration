@@ -74,13 +74,13 @@ func (client *OrkaClient) DeployEmulator(ctx context.Context, name, vmName strin
 		"--namespace", client.envData.OrkaNamespace,
 	)
 
-	res, err := exec.ExecJSONCommand[[]*OrkaEmulatorResponseModel]("orka3", args)
+	res, err := exec.ExecJSONCommand[[]*OrkaEmulatorResponseModel](cliBinary, args)
 	if err != nil {
 		return nil, err
 	}
 
 	if res == nil || len(*res) == 0 {
-		return nil, fmt.Errorf("orka3 reported no emulator for %s", name)
+		return nil, fmt.Errorf("orka reported no emulator for %s", name)
 	}
 
 	return (*res)[0], nil
@@ -97,7 +97,7 @@ func (client *OrkaClient) DeleteEmulator(ctx context.Context, names ...string) e
 	args := append([]string{"emulator", "delete"}, names...)
 	args = append(args, "--namespace", client.envData.OrkaNamespace)
 
-	_, err := exec.ExecStringCommand("orka3", args)
+	_, err := exec.ExecStringCommand(cliBinary, args)
 	if err != nil && strings.Contains(strings.ToLower(err.Error()), "not found") {
 		return nil
 	}
@@ -106,7 +106,7 @@ func (client *OrkaClient) DeleteEmulator(ctx context.Context, names ...string) e
 }
 
 func (client *OrkaClient) ListEmulators(ctx context.Context) ([]*OrkaEmulatorResponseModel, error) {
-	res, err := exec.ExecJSONCommand[[]*OrkaEmulatorResponseModel]("orka3", []string{"emulator", "list", "-o", "json", "--namespace", client.envData.OrkaNamespace})
+	res, err := exec.ExecJSONCommand[[]*OrkaEmulatorResponseModel](cliBinary, []string{"emulator", "list", "-o", "json", "--namespace", client.envData.OrkaNamespace})
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +119,7 @@ func (client *OrkaClient) ListEmulators(ctx context.Context) ([]*OrkaEmulatorRes
 }
 
 func (client *OrkaClient) ListEmulatorConfigs(ctx context.Context) ([]*OrkaEmulatorConfigResponseModel, error) {
-	res, err := exec.ExecJSONCommand[[]*OrkaEmulatorConfigResponseModel]("orka3", []string{"emulator-config", "list", "-o", "json", "--namespace", client.envData.OrkaNamespace})
+	res, err := exec.ExecJSONCommand[[]*OrkaEmulatorConfigResponseModel](cliBinary, []string{"emulator-config", "list", "-o", "json", "--namespace", client.envData.OrkaNamespace})
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +135,7 @@ func (client *OrkaClient) ListEmulatorConfigs(ctx context.Context) ([]*OrkaEmula
 // Used for the inline path, which needs the emulator command group but not named configs.
 func (client *OrkaClient) verifyEmulatorSupport(ctx context.Context) error {
 	if _, err := client.ListEmulators(ctx); err != nil {
-		return fmt.Errorf("unable to list Android emulators, which %s requires. The cluster and the bundled orka3 CLI must both support Android emulators. More info: %s", env.OrkaEmulatorsEnvName, err.Error())
+		return fmt.Errorf("unable to list Android emulators, which %s requires. The cluster and the bundled orka CLI must both support Android emulators. More info: %s", env.OrkaEmulatorsEnvName, err.Error())
 	}
 
 	return nil
@@ -148,7 +148,7 @@ func (client *OrkaClient) verifyEmulatorSupport(ctx context.Context) error {
 func (client *OrkaClient) verifyEmulatorConfigs(ctx context.Context) error {
 	configs, err := client.ListEmulatorConfigs(ctx)
 	if err != nil {
-		return fmt.Errorf("unable to list Android emulator configs, which %s requires. The cluster and the bundled orka3 CLI must both support Android emulators. More info: %s", env.OrkaEmulatorConfigsEnvName, err.Error())
+		return fmt.Errorf("unable to list Android emulator configs, which %s requires. The cluster and the bundled orka CLI must both support Android emulators. More info: %s", env.OrkaEmulatorConfigsEnvName, err.Error())
 	}
 
 	missing, available := diffEmulatorConfigs(client.envData.OrkaEmulatorConfigs, configs)
