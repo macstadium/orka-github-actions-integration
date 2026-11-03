@@ -22,15 +22,6 @@ type Runner struct {
 	Id   int
 }
 
-// EmulatorSpec describes an emulator inline, for clusters that cannot yet deploy from a named
-// AndroidEmulatorConfig. Prefer ORKA_EMULATOR_CONFIGS where the cluster supports it; this exists so
-// the feature is usable before that lands, and should be removed once it has.
-type EmulatorSpec struct {
-	Platform      string `json:"platform"`
-	ImageType     string `json:"imageType"`
-	DeviceProfile string `json:"deviceProfile,omitempty"`
-}
-
 type Data struct {
 	GitHubAppID             int64
 	GitHubAppInstallationID int64
@@ -53,9 +44,8 @@ type Data struct {
 	OrkaEnableNodeIPMapping bool
 	OrkaNodeIPMapping       map[string]string
 
-	OrkaEmulatorConfigs       []string
-	OrkaEmulators             []EmulatorSpec
-	OrkaEmulatorDeployTimeout int
+	OrkaEmulatorDeployTimeout     int
+	EmulatorConfigRefreshInterval time.Duration
 
 	Runners []Runner
 
@@ -101,11 +91,12 @@ func ParseEnv() *Data {
 
 		OrkaEnableNodeIPMapping: getBoolEnv(OrkaEnableNodeIPMappingEnvName, false),
 
-		OrkaEmulatorConfigs: getCommaSeparatedEnv(OrkaEmulatorConfigsEnvName),
 		// Deliberately above the CLI's own default of 5. The first deploy of a given platform and
 		// system image on a node blocks on an sdkmanager pull that can exhaust 5 minutes on its own,
-		// before AVD creation and emulator boot.
-		OrkaEmulatorDeployTimeout: getIntEnv(OrkaEmulatorDeployTimeoutEnvName, 10),
+		// before AVD creation and emulator boot. It must also outlast the operator's
+		// AVD_UNSCHEDULABLE_TIMEOUT so a scheduling failure is reported as one.
+		OrkaEmulatorDeployTimeout:     getIntEnv(OrkaEmulatorDeployTimeoutEnvName, 10),
+		EmulatorConfigRefreshInterval: getDurationEnv(EmulatorConfigRefreshIntervalEnvName, 60*time.Second),
 
 		RunnerDeregistrationTimeout:      getDurationEnv(RunnerDeregistrationTimeoutEnvName, 30*time.Second),
 		RunnerDeregistrationPollInterval: getDurationEnv(RunnerDeregistrationPollIntervalEnvName, 2*time.Second),
@@ -189,12 +180,6 @@ func ParseEnv() *Data {
 		}
 	}
 
-	if raw := strings.TrimSpace(os.Getenv(OrkaEmulatorsEnvName)); raw != "" {
-		if err := json.Unmarshal([]byte(raw), &envData.OrkaEmulators); err != nil {
-			errors = append(errors, fmt.Sprintf(`unable to parse the %s environment variable as a JSON array of emulator specs. Example: '[{"platform":"android-36","imageType":"google_apis","deviceProfile":"pixel_8"}]'`, OrkaEmulatorsEnvName))
-		}
-	}
-
 	if envData.GitHubRunnerVersion == "" {
 		if latestVersion, err := version.GetLatestRunnerVersion(&envData.GitHubToken); err != nil {
 			errors = append(errors, err.Error())
@@ -253,28 +238,6 @@ func getIntEnv(key string, fallback int) int {
 	return parsed
 }
 
-func getCommaSeparatedEnv(key string) []string {
-	return parseCommaSeparated(os.Getenv(key))
-}
-
-// parseCommaSeparated splits a comma separated value and trims each entry. Empty entries are
-// preserved rather than dropped so validateEnv can reject them: silently accepting "a,,b" would
-// hide a typo in a list whose entries name cluster resources.
-func parseCommaSeparated(value string) []string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return nil
-	}
-
-	parts := strings.Split(value, ",")
-	entries := make([]string, len(parts))
-	for i, part := range parts {
-		entries[i] = strings.TrimSpace(part)
-	}
-
-	return entries
-}
-
 func getDurationEnv(key string, fallback time.Duration) time.Duration {
 	value := os.Getenv(key)
 
@@ -328,42 +291,22 @@ func validateEnv(envData *Data) []string {
 		errors = append(errors, fmt.Sprintf("%s must be formatted as key=value comma separated string", OrkaVMMetadataEnvName))
 	}
 
-	for i, name := range envData.OrkaEmulatorConfigs {
-		if name == "" {
-			errors = append(errors, fmt.Sprintf("%s has an empty entry at position %d. It must be a comma separated list of existing Android emulator config names, for example 'pixel8-api36,tablet-api35'", OrkaEmulatorConfigsEnvName, i+1))
-		}
-	}
-
-	if len(envData.OrkaEmulatorConfigs) > 0 && len(envData.OrkaEmulators) > 0 {
-		errors = append(errors, fmt.Sprintf("%s and %s are both set, which is ambiguous. Use %s where the cluster supports named emulator configs, otherwise use %s", OrkaEmulatorConfigsEnvName, OrkaEmulatorsEnvName, OrkaEmulatorConfigsEnvName, OrkaEmulatorsEnvName))
-	}
-
-	for i, emulator := range envData.OrkaEmulators {
-		if emulator.Platform == "" || emulator.ImageType == "" {
-			errors = append(errors, fmt.Sprintf("%s entry %d must set both platform and imageType, for example {\"platform\":\"android-36\",\"imageType\":\"google_apis\"}", OrkaEmulatorsEnvName, i+1))
-		}
-	}
-
-	if envData.EmulatorsEnabled() && envData.OrkaEmulatorDeployTimeout <= 0 {
+	if envData.OrkaEmulatorDeployTimeout <= 0 {
 		errors = append(errors, fmt.Sprintf("%s must be a positive number of minutes", OrkaEmulatorDeployTimeoutEnvName))
+	}
+
+	if envData.EmulatorConfigRefreshInterval <= 0 {
+		errors = append(errors, fmt.Sprintf("%s must be a positive duration, for example 60s", EmulatorConfigRefreshIntervalEnvName))
 	}
 
 	return errors
 }
 
-// EmulatorsEnabled reports whether Android emulator pairing is configured. With no emulator configs
-// named, every emulator code path is skipped and the runner behaves exactly as it did before.
-func (data *Data) EmulatorsEnabled() bool {
-	return len(data.OrkaEmulatorConfigs) > 0 || len(data.OrkaEmulators) > 0
-}
-
-// EmulatorCount is how many emulators are paired with each runner VM.
-func (data *Data) EmulatorCount() int {
-	if len(data.OrkaEmulatorConfigs) > 0 {
-		return len(data.OrkaEmulatorConfigs)
-	}
-
-	return len(data.OrkaEmulators)
+// EmulatorDeployTimeoutTooShort reports whether the emulator deploy timeout fails to outlast the
+// operator's AVD_UNSCHEDULABLE_TIMEOUT. With a shorter timeout the CLI gives up first, so a node
+// without emulator capacity is reported as a generic timeout instead of a scheduling failure.
+func (data *Data) EmulatorDeployTimeoutTooShort() bool {
+	return data.OrkaEmulatorDeployTimeout <= OperatorUnschedulableTimeoutMinutes
 }
 
 func hasAnyGitHubAppEnv(envData *Data) bool {

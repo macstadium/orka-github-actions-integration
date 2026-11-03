@@ -2,22 +2,30 @@ package provisioner
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	backoff "github.com/cenkalti/backoff/v4"
+	"github.com/macstadium/orka-github-actions-integration/pkg/emulator"
 	"github.com/macstadium/orka-github-actions-integration/pkg/env"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/actions"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
+	"github.com/macstadium/orka-github-actions-integration/pkg/metrics"
 	"github.com/macstadium/orka-github-actions-integration/pkg/orka"
 	"github.com/macstadium/orka-github-actions-integration/pkg/utils"
 	"go.uber.org/zap"
 )
+
+// EmulatorSource says which emulators to pair with a VM. emulator.Resolver implements it.
+type EmulatorSource interface {
+	// Supported reports whether the cluster has shown it can serve emulators at all.
+	Supported() bool
+	// Emulators returns the emulators to deploy alongside a VM from vmConfig, in deploy order.
+	Emulators(vmConfig string) []emulator.EmulatorRef
+}
 
 type RunnerProvisioner struct {
 	runnerScaleSet *types.RunnerScaleSet
@@ -25,6 +33,8 @@ type RunnerProvisioner struct {
 	envData        *env.Data
 
 	orkaClient orka.OrkaService
+	emulators  EmulatorSource
+	metrics    *metrics.Metrics
 	logger     *zap.SugaredLogger
 
 	mu sync.Mutex
@@ -81,7 +91,7 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) (*orka.VMComman
 	// Emulators are deployed before the JIT runner config because a cold deploy blocks on an
 	// sdkmanager pull that can run for minutes, and a JIT config created first would sit aging
 	// through that wait.
-	emulators, err := p.deployEmulators(ctx, runnerName)
+	emulators, err := p.deployEmulators(ctx, runnerName, vmResponse.Node)
 	if err != nil {
 		p.logger.Errorf("failed to deploy emulators for %s: %v", runnerName, err)
 		return nil, nil, err
@@ -104,134 +114,16 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) (*orka.VMComman
 		Logger:     p.logger,
 	}
 
-	commands := buildCommands(jitConfig.EncodedJITConfig, p.envData.GitHubRunnerVersion, p.envData.OrkaVMUsername, emulators)
+	exports, dropped := buildEmulatorExports(emulators)
+	for _, alias := range dropped {
+		p.logger.Warnf("not exporting ORKA_EMULATOR_%s_* for emulator config %s on VM %s: %s", alias.Sanitized, alias.Config, runnerName, alias.Reason)
+	}
+
+	commands := buildCommands(jitConfig.EncodedJITConfig, p.envData.GitHubRunnerVersion, p.envData.OrkaVMUsername, exports)
 
 	provisioningSucceeded = true
 
 	return vmCommandExecutor, commands, nil
-}
-
-// provisionedEmulator pairs a deployed emulator with the spec that produced it. The deploy response
-// resolves platform, image type, and device profile, but does not echo back which config or inline
-// spec was asked for, so it is carried alongside.
-type provisionedEmulator struct {
-	config   string
-	emulator *orka.OrkaEmulatorResponseModel
-}
-
-// emulatorSpecs resolves the configured emulators into deploy specs. Named configs win where both
-// are somehow present, though validateEnv rejects that combination before we get here.
-func (p *RunnerProvisioner) emulatorSpecs() []orka.EmulatorSpec {
-	if len(p.envData.OrkaEmulatorConfigs) > 0 {
-		specs := make([]orka.EmulatorSpec, 0, len(p.envData.OrkaEmulatorConfigs))
-		for _, name := range p.envData.OrkaEmulatorConfigs {
-			specs = append(specs, orka.EmulatorSpec{Config: name})
-		}
-
-		return specs
-	}
-
-	specs := make([]orka.EmulatorSpec, 0, len(p.envData.OrkaEmulators))
-	for _, emulator := range p.envData.OrkaEmulators {
-		specs = append(specs, orka.EmulatorSpec{
-			Platform:      emulator.Platform,
-			ImageType:     emulator.ImageType,
-			DeviceProfile: emulator.DeviceProfile,
-		})
-	}
-
-	return specs
-}
-
-// emulatorName is the deterministic name of the nth emulator (1-indexed) paired with a VM. Deriving
-// it from the VM name means cleanup and reconciliation never have to parse CLI output to discover
-// what to delete, and it covers the case where a deploy times out: the CLI abandons the emulator
-// record instead of removing it, so we have to be able to name it ourselves.
-func emulatorName(vmName string, index int) string {
-	return fmt.Sprintf("%s-emu-%d", vmName, index+1)
-}
-
-// deployEmulators brings up one emulator per configured emulator config, concurrently. Concurrency
-// is safe because the operator's port allocator holds a pending reservation for each console port
-// until the pod is listable; deploying in sequence would instead cost N times the deploy latency.
-func (p *RunnerProvisioner) deployEmulators(ctx context.Context, vmName string) ([]provisionedEmulator, error) {
-	specs := p.emulatorSpecs()
-	if len(specs) == 0 {
-		return nil, nil
-	}
-
-	labels := make([]string, 0, len(specs))
-	for _, spec := range specs {
-		labels = append(labels, spec.Label())
-	}
-
-	p.logger.Infof("deploying %d Android emulator(s) for VM %s: %s", len(specs), vmName, strings.Join(labels, ", "))
-
-	var wg sync.WaitGroup
-	provisioned := make([]provisionedEmulator, len(specs))
-	failures := make([]error, len(specs))
-
-	for i, spec := range specs {
-		wg.Add(1)
-
-		go func(index int, emulatorSpec orka.EmulatorSpec) {
-			defer wg.Done()
-
-			name := emulatorName(vmName, index)
-
-			emulator, err := p.orkaClient.DeployEmulator(ctx, name, vmName, emulatorSpec)
-			if err != nil {
-				failures[index] = fmt.Errorf("emulator %s (%s): %w", name, emulatorSpec.Label(), err)
-				return
-			}
-
-			// A running emulator without a relay address is unusable: the relay is the only way a
-			// job inside the VM can reach it, so treat this as a provisioning failure rather than
-			// exporting an empty address the workflow cannot act on.
-			if !emulator.HasRelay() {
-				failures[index] = fmt.Errorf("emulator %s (%s) reported status %s with no relay address", name, emulatorSpec.Label(), emulator.Status)
-				return
-			}
-
-			provisioned[index] = provisionedEmulator{config: emulatorSpec.Label(), emulator: emulator}
-		}(i, spec)
-	}
-
-	wg.Wait()
-
-	if err := errors.Join(failures...); err != nil {
-		return nil, err
-	}
-
-	for _, entry := range provisioned {
-		p.logger.Infof("emulator %s ready for VM %s at %s (platform %s, image type %s)", entry.emulator.Name, vmName, entry.emulator.ADBTarget(), entry.emulator.Platform, entry.emulator.ImageType)
-	}
-
-	return provisioned, nil
-}
-
-// deleteEmulators removes the emulators paired with a VM ahead of the VM itself. The operator
-// garbage-collects them anyway through the VM's owner reference, so this is best effort: it frees
-// the node's console and ADB ports promptly and keeps the logs explicit, but a failure here must
-// never stop the VM from being deleted.
-func (p *RunnerProvisioner) deleteEmulators(ctx context.Context, vmName string) {
-	if !p.envData.EmulatorsEnabled() {
-		return
-	}
-
-	names := make([]string, 0, p.envData.EmulatorCount())
-	for i := 0; i < p.envData.EmulatorCount(); i++ {
-		names = append(names, emulatorName(vmName, i))
-	}
-
-	p.logger.Infof("deleting emulator(s) %s for VM %s", strings.Join(names, ", "), vmName)
-
-	if err := p.orkaClient.DeleteEmulator(ctx, names...); err != nil {
-		p.logger.Warnf("failed to delete emulator(s) for VM %s, falling back to owner-reference cleanup when the VM is deleted: %v", vmName, err)
-		return
-	}
-
-	p.logger.Infof("deleted emulator(s) for VM %s", vmName)
 }
 
 func (p *RunnerProvisioner) CleanupResources(ctx context.Context, runnerName string) {
@@ -380,7 +272,11 @@ func (p *RunnerProvisioner) createRunner(ctx context.Context, runnerName string)
 	return jitConfig, nil
 }
 
-func buildCommands(jitConfig, version, username string, emulators []provisionedEmulator) []string {
+// buildCommands renders the command stream run over SSH in the VM. Exports go ahead of the runner
+// so the environment is in place when run.sh starts; the runner passes its own environment through
+// to job steps, which is the only channel a job has for learning its emulators' addresses, since it
+// cannot reach the Orka control plane from inside the VM.
+func buildCommands(jitConfig, version, username string, exports []string) []string {
 	commands := utils.Map(
 		commands_template,
 		func(cmd string) string {
@@ -392,83 +288,19 @@ func buildCommands(jitConfig, version, username string, emulators []provisionedE
 		},
 	)
 
-	// Exports go ahead of the runner so the environment is in place when run.sh starts. The runner
-	// passes its own environment through to job steps, which is the only channel a job has for
-	// learning its emulator's address: it cannot reach the Orka control plane from inside the VM.
-	return append(buildEmulatorExports(emulators), commands...)
+	return append(append([]string(nil), exports...), commands...)
 }
 
-// buildEmulatorExports renders the emulator environment as export statements. These are generated
-// as discrete lines rather than folded into commands_template's placeholder substitution so that
-// every value is single-quoted: the values come from the cluster, not from us, and must not be able
-// to break out of the command stream.
-func buildEmulatorExports(emulators []provisionedEmulator) []string {
-	if len(emulators) == 0 {
-		return nil
-	}
-
-	exports := []string{shellExport("ORKA_EMULATOR_COUNT", strconv.Itoa(len(emulators)))}
-	targets := make([]string, 0, len(emulators))
-
-	for i, entry := range emulators {
-		emulator := entry.emulator
-		prefix := fmt.Sprintf("ORKA_EMULATOR_%d", i+1)
-
-		// deployEmulators rejects any emulator without a relay, so these are safe to read.
-		host := *emulator.RelayIP
-		port := strconv.Itoa(*emulator.RelayPort)
-		target := emulator.ADBTarget()
-		targets = append(targets, target)
-
-		exports = append(exports,
-			shellExport(prefix+"_NAME", emulator.Name),
-			shellExport(prefix+"_CONFIG", entry.config),
-			shellExport(prefix+"_ADB_HOST", host),
-			shellExport(prefix+"_ADB_PORT", port),
-			shellExport(prefix+"_ADB", target),
-			shellExport(prefix+"_PLATFORM", emulator.Platform),
-			shellExport(prefix+"_IMAGE_TYPE", emulator.ImageType),
-			shellExport(prefix+"_DEVICE_PROFILE", derefOrEmpty(emulator.DeviceProfile)),
-		)
-	}
-
-	// Unprefixed aliases for the common single-emulator case, so a workflow that only ever uses one
-	// device does not have to carry an index.
-	first := emulators[0].emulator
-	exports = append(exports,
-		shellExport("ORKA_EMULATOR_ADB_HOST", *first.RelayIP),
-		shellExport("ORKA_EMULATOR_ADB_PORT", strconv.Itoa(*first.RelayPort)),
-		shellExport("ORKA_EMULATOR_ADB", targets[0]),
-		shellExport("ORKA_EMULATOR_ADB_TARGETS", strings.Join(targets, ",")),
-	)
-
-	return exports
-}
-
-func shellExport(name, value string) string {
-	return fmt.Sprintf("export %s=%s", name, singleQuote(value))
-}
-
-// singleQuote wraps a value for safe use in a POSIX shell, closing and reopening the quote around
-// any embedded single quote.
-func singleQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
-}
-
-func derefOrEmpty(value *string) string {
-	if value == nil {
-		return ""
-	}
-
-	return *value
-}
-
-func NewRunnerProvisioner(runnerScaleSet *types.RunnerScaleSet, actionsClient actions.ActionsService, orkaClient orka.OrkaService, envData *env.Data) *RunnerProvisioner {
+// NewRunnerProvisioner builds a provisioner. emulators may be nil, in which case no emulators are
+// ever paired; m may be nil, in which case nothing is recorded.
+func NewRunnerProvisioner(runnerScaleSet *types.RunnerScaleSet, actionsClient actions.ActionsService, orkaClient orka.OrkaService, envData *env.Data, emulators EmulatorSource, m *metrics.Metrics) *RunnerProvisioner {
 	return &RunnerProvisioner{
 		runnerScaleSet: runnerScaleSet,
 		actionsClient:  actionsClient,
 		envData:        envData,
 		orkaClient:     orkaClient,
+		emulators:      emulators,
+		metrics:        m,
 		logger:         logging.Logger.Named(fmt.Sprintf("runner-provisioner-%d", runnerScaleSet.Id)),
 	}
 }

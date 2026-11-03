@@ -1,6 +1,7 @@
 package orka
 
 import (
+	"encoding/json"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -12,52 +13,20 @@ func TestOrka(t *testing.T) {
 	RunSpecs(t, "Orka Suite")
 }
 
-func emulatorConfigs(names ...string) []*OrkaEmulatorConfigResponseModel {
-	configs := make([]*OrkaEmulatorConfigResponseModel, 0, len(names))
-	for _, name := range names {
-		configs = append(configs, &OrkaEmulatorConfigResponseModel{Name: name})
+func emulatorFor(name, vm string) *OrkaEmulatorResponseModel {
+	return &OrkaEmulatorResponseModel{Name: name, VM: vm}
+}
+
+func names(emulators []*OrkaEmulatorResponseModel) []string {
+	out := make([]string, 0, len(emulators))
+	for _, emulator := range emulators {
+		out = append(out, emulator.Name)
 	}
 
-	return configs
+	return out
 }
 
 var _ = Describe("Orka Test", func() {
-
-	DescribeTable("when diffing configured emulator configs against the cluster",
-		func(configured []string, existing []string, expectedMissing []string) {
-			missing, _ := diffEmulatorConfigs(configured, emulatorConfigs(existing...))
-			Expect(missing).To(Equal(expectedMissing))
-		},
-		Entry("with every config present, should report none missing",
-			[]string{"pixel8-api36", "tablet-api35"},
-			[]string{"pixel8-api36", "tablet-api35"},
-			[]string{}),
-		Entry("with a config absent, should report it missing",
-			[]string{"pixel8-api36", "typo-config"},
-			[]string{"pixel8-api36", "tablet-api35"},
-			[]string{"typo-config"}),
-		Entry("with no configs in the cluster, should report all missing",
-			[]string{"pixel8-api36"},
-			nil,
-			[]string{"pixel8-api36"}),
-		Entry("with extra configs in the cluster, should report none missing",
-			[]string{"pixel8-api36"},
-			[]string{"pixel8-api36", "unused-config"},
-			[]string{}),
-		Entry("with a repeated missing config, should report it once per entry",
-			[]string{"typo-config", "typo-config"},
-			[]string{"pixel8-api36"},
-			[]string{"typo-config", "typo-config"}),
-		Entry("with nothing configured, should report none missing",
-			nil,
-			[]string{"pixel8-api36"},
-			[]string{}),
-	)
-
-	It("reports the available config names alongside the missing ones", func() {
-		_, available := diffEmulatorConfigs([]string{"typo"}, emulatorConfigs("pixel8-api36", "tablet-api35"))
-		Expect(available).To(Equal([]string{"pixel8-api36", "tablet-api35"}))
-	})
 
 	Describe("the emulator relay address", func() {
 		It("is unavailable when the emulator is still pending", func() {
@@ -87,33 +56,50 @@ var _ = Describe("Orka Test", func() {
 			Expect(emulator.ADBTarget()).To(Equal("192.168.64.1:15555"))
 		})
 	})
-})
 
-var _ = Describe("Emulator spec", func() {
-	DescribeTable("renders deploy flags",
-		func(spec EmulatorSpec, expected []string) {
-			Expect(spec.deployArgs()).To(Equal(expected))
-		},
-		Entry("a named config uses --config alone",
-			EmulatorSpec{Config: "pixel8-api36"},
-			[]string{"--config", "pixel8-api36"}),
-		Entry("an inline spec passes platform and image type",
-			EmulatorSpec{Platform: "android-36", ImageType: "google_apis"},
-			[]string{"--platform", "android-36", "--image-type", "google_apis"}),
-		Entry("an inline spec adds the device profile when set",
-			EmulatorSpec{Platform: "android-36", ImageType: "google_apis", DeviceProfile: "pixel_8"},
-			[]string{"--platform", "android-36", "--image-type", "google_apis", "--device-profile", "pixel_8"}),
-		Entry("a named config wins over inline fields",
-			EmulatorSpec{Config: "pixel8-api36", Platform: "android-36", ImageType: "google_apis"},
-			[]string{"--config", "pixel8-api36"}),
-	)
+	// Captured from 'orka emulator deploy -o json' against an Orka 4.0.0 cluster.
+	It("decodes the emulator deploy response the CLI returns", func() {
+		raw := `[{"age":"6s","deviceProfile":null,"grpcPort":null,"imageType":"google_apis","name":"ok6365-verify-emu-1","node":"mini-arm-36","owner":"kubernetes-admin","platform":"android-36","relayIp":"192.168.64.1","relayPort":15555,"status":"Running","vm":"ok6365-verify"}]`
 
-	DescribeTable("labels itself for logs and the job environment",
-		func(spec EmulatorSpec, expected string) {
-			Expect(spec.Label()).To(Equal(expected))
+		var decoded []*OrkaEmulatorResponseModel
+		Expect(json.Unmarshal([]byte(raw), &decoded)).To(Succeed())
+		Expect(decoded).To(HaveLen(1))
+
+		emulator := decoded[0]
+		Expect(emulator.Name).To(Equal("ok6365-verify-emu-1"))
+		Expect(emulator.VM).To(Equal("ok6365-verify"))
+		Expect(emulator.Status).To(Equal(EmulatorRunning))
+		Expect(emulator.DeviceProfile).To(BeNil())
+		Expect(emulator.ADBTarget()).To(Equal("192.168.64.1:15555"))
+	})
+
+	Describe("selecting the emulators paired with a VM", func() {
+		emulators := []*OrkaEmulatorResponseModel{
+			emulatorFor("foo-abcde-emu-1", "foo-abcde"),
+			emulatorFor("foo-abcde-emu-2", "foo-abcde"),
+			emulatorFor("foo-abcde2-emu-1", "foo-abcde2"),
+			emulatorFor("foo-bar-abcde-emu-1", "foo-bar-abcde"),
+			nil,
+		}
+
+		It("matches the VM name exactly", func() {
+			Expect(names(EmulatorsForVM(emulators, "foo-abcde"))).To(Equal([]string{"foo-abcde-emu-1", "foo-abcde-emu-2"}))
+		})
+
+		It("finds nothing for a VM without emulators", func() {
+			Expect(EmulatorsForVM(emulators, "foo-zzzzz")).To(BeEmpty())
+		})
+	})
+
+	DescribeTable("deciding whether a VM belongs to a scale set",
+		func(vmName, scaleSetName string, expected bool) {
+			Expect(BelongsToScaleSet(vmName, scaleSetName)).To(Equal(expected))
 		},
-		Entry("as the config name when there is one", EmulatorSpec{Config: "pixel8-api36"}, "pixel8-api36"),
-		Entry("as platform/imageType inline", EmulatorSpec{Platform: "android-36", ImageType: "google_apis"}, "android-36/google_apis"),
-		Entry("including the device profile when set", EmulatorSpec{Platform: "android-36", ImageType: "google_apis", DeviceProfile: "pixel_8"}, "android-36/google_apis/pixel_8"),
+		Entry("a generated name belongs", "foo-abcde", "foo", true),
+		Entry("a longer scale set's VM does not belong to the shorter one", "foo-bar-abcde", "foo", false),
+		Entry("the longer scale set owns its own VM", "foo-bar-abcde", "foo-bar", true),
+		Entry("a name sharing only a prefix does not belong", "foobar-abcde", "foo", false),
+		Entry("the bare scale set name is not a VM of it", "foo", "foo", false),
+		Entry("a trailing dash with no suffix does not belong", "foo-", "foo", false),
 	)
 })

@@ -22,10 +22,11 @@ type OrkaService interface {
 	DeleteVM(ctx context.Context, name string) error
 	ListVMs(ctx context.Context, namePrefix string) ([]*OrkaVMInfo, error)
 
-	DeployEmulator(ctx context.Context, name, vmName string, spec EmulatorSpec) (*OrkaEmulatorResponseModel, error)
+	DeployEmulator(ctx context.Context, name, vmName, config string) (*OrkaEmulatorResponseModel, error)
 	DeleteEmulator(ctx context.Context, names ...string) error
 	ListEmulators(ctx context.Context) ([]*OrkaEmulatorResponseModel, error)
 	ListEmulatorConfigs(ctx context.Context) ([]*OrkaEmulatorConfigResponseModel, error)
+	ListVMConfigs(ctx context.Context) ([]*OrkaVMConfigResponseModel, error)
 }
 
 type OrkaClient struct {
@@ -38,7 +39,7 @@ func (client *OrkaClient) DeployVM(ctx context.Context, namePrefix, vmConfig str
 		args = append(args, "--metadata", client.envData.OrkaVMMetadata)
 	}
 
-	res, err := exec.ExecJSONCommand[[]*OrkaVMDeployResponseModel](cliBinary, args)
+	res, err := exec.ExecJSONCommand[[]*OrkaVMDeployResponseModel](ctx, cliBinary, args)
 	if err != nil {
 		return nil, err
 	}
@@ -47,7 +48,7 @@ func (client *OrkaClient) DeployVM(ctx context.Context, namePrefix, vmConfig str
 }
 
 func (client *OrkaClient) ListVMs(ctx context.Context, namePrefix string) ([]*OrkaVMInfo, error) {
-	res, err := exec.ExecJSONCommand[[]*OrkaVMInfo](cliBinary, []string{"vm", "list", "--namespace", client.envData.OrkaNamespace, "-o", "json"})
+	res, err := exec.ExecJSONCommand[[]*OrkaVMInfo](ctx, cliBinary, []string{"vm", "list", "--namespace", client.envData.OrkaNamespace, "-o", "json"})
 	if err != nil {
 		return nil, err
 	}
@@ -62,19 +63,20 @@ func (client *OrkaClient) ListVMs(ctx context.Context, namePrefix string) ([]*Or
 }
 
 // DeployEmulator deploys an Android emulator paired with a running VM, from a named emulator
-// config. The config owns the platform, system image, device profile, and sizing, so this only
-// passes a name through. The call blocks until the emulator is running, fails, or the timeout
-// elapses, which can take minutes on a node that has not yet pulled the system image.
-func (client *OrkaClient) DeployEmulator(ctx context.Context, name, vmName string, spec EmulatorSpec) (*OrkaEmulatorResponseModel, error) {
-	args := []string{"emulator", "deploy", name, "--vm", vmName}
-	args = append(args, spec.deployArgs()...)
-	args = append(args,
+// config. The config owns the platform, system image, and device profile, so this only passes a
+// name through. The call blocks until the emulator is running, fails, or the timeout elapses,
+// which can take minutes on a node that has not yet pulled the system image.
+func (client *OrkaClient) DeployEmulator(ctx context.Context, name, vmName, config string) (*OrkaEmulatorResponseModel, error) {
+	args := []string{
+		"emulator", "deploy", name,
+		"--vm", vmName,
+		"--config", config,
 		"--timeout", strconv.Itoa(client.envData.OrkaEmulatorDeployTimeout),
 		"-o", "json",
 		"--namespace", client.envData.OrkaNamespace,
-	)
+	}
 
-	res, err := exec.ExecJSONCommand[[]*OrkaEmulatorResponseModel](cliBinary, args)
+	res, err := exec.ExecJSONCommand[[]*OrkaEmulatorResponseModel](ctx, cliBinary, args)
 	if err != nil {
 		return nil, err
 	}
@@ -88,7 +90,8 @@ func (client *OrkaClient) DeployEmulator(ctx context.Context, name, vmName strin
 
 // DeleteEmulator removes the named emulators. A missing emulator is treated as success: the
 // operator garbage-collects emulators through the paired VM's owner reference, so by the time we
-// get here one may already be gone.
+// get here one may already be gone. The CLI reports that as the raw Kubernetes NotFound error,
+// androidemulatorinstances.orka.macstadium.com "<name>" not found.
 func (client *OrkaClient) DeleteEmulator(ctx context.Context, names ...string) error {
 	if len(names) == 0 {
 		return nil
@@ -97,7 +100,7 @@ func (client *OrkaClient) DeleteEmulator(ctx context.Context, names ...string) e
 	args := append([]string{"emulator", "delete"}, names...)
 	args = append(args, "--namespace", client.envData.OrkaNamespace)
 
-	_, err := exec.ExecStringCommand(cliBinary, args)
+	_, err := exec.ExecStringCommand(ctx, cliBinary, args)
 	if err != nil && strings.Contains(strings.ToLower(err.Error()), "not found") {
 		return nil
 	}
@@ -106,7 +109,7 @@ func (client *OrkaClient) DeleteEmulator(ctx context.Context, names ...string) e
 }
 
 func (client *OrkaClient) ListEmulators(ctx context.Context) ([]*OrkaEmulatorResponseModel, error) {
-	res, err := exec.ExecJSONCommand[[]*OrkaEmulatorResponseModel](cliBinary, []string{"emulator", "list", "-o", "json", "--namespace", client.envData.OrkaNamespace})
+	res, err := exec.ExecJSONCommand[[]*OrkaEmulatorResponseModel](ctx, cliBinary, []string{"emulator", "list", "-o", "json", "--namespace", client.envData.OrkaNamespace})
 	if err != nil {
 		return nil, err
 	}
@@ -118,8 +121,10 @@ func (client *OrkaClient) ListEmulators(ctx context.Context) ([]*OrkaEmulatorRes
 	return *res, nil
 }
 
+// ListEmulatorConfigs lists every Android emulator config in the cluster. Emulator configs always
+// live in orka-default and the command group has no --namespace flag, so none is passed.
 func (client *OrkaClient) ListEmulatorConfigs(ctx context.Context) ([]*OrkaEmulatorConfigResponseModel, error) {
-	res, err := exec.ExecJSONCommand[[]*OrkaEmulatorConfigResponseModel](cliBinary, []string{"emulator-config", "list", "-o", "json", "--namespace", client.envData.OrkaNamespace})
+	res, err := exec.ExecJSONCommand[[]*OrkaEmulatorConfigResponseModel](ctx, cliBinary, []string{"emulator-config", "list", "-o", "json"})
 	if err != nil {
 		return nil, err
 	}
@@ -131,61 +136,45 @@ func (client *OrkaClient) ListEmulatorConfigs(ctx context.Context) ([]*OrkaEmula
 	return *res, nil
 }
 
-// verifyEmulatorSupport fails startup when the cluster or the bundled CLI cannot serve emulators.
-// Used for the inline path, which needs the emulator command group but not named configs.
-func (client *OrkaClient) verifyEmulatorSupport(ctx context.Context) error {
-	if _, err := client.ListEmulators(ctx); err != nil {
-		return fmt.Errorf("unable to list Android emulators, which %s requires. The cluster and the bundled orka CLI must both support Android emulators. More info: %s", env.OrkaEmulatorsEnvName, err.Error())
-	}
-
-	return nil
-}
-
-// verifyEmulatorConfigs fails startup when the cluster cannot serve emulators at all, or when a
-// configured emulator config does not exist. Checking here rather than at deploy time is the point
-// of naming configs instead of inlining specs: a typo becomes one startup error instead of a
-// failure on every job, minutes into each provisioning attempt.
-func (client *OrkaClient) verifyEmulatorConfigs(ctx context.Context) error {
-	configs, err := client.ListEmulatorConfigs(ctx)
+// ListVMConfigs lists every VM config in the cluster. Like emulator configs, VM configs always live
+// in orka-default, so no namespace is passed.
+func (client *OrkaClient) ListVMConfigs(ctx context.Context) ([]*OrkaVMConfigResponseModel, error) {
+	res, err := exec.ExecJSONCommand[[]*OrkaVMConfigResponseModel](ctx, cliBinary, []string{"vm-config", "list", "-o", "json"})
 	if err != nil {
-		return fmt.Errorf("unable to list Android emulator configs, which %s requires. The cluster and the bundled orka CLI must both support Android emulators. More info: %s", env.OrkaEmulatorConfigsEnvName, err.Error())
+		return nil, err
 	}
 
-	missing, available := diffEmulatorConfigs(client.envData.OrkaEmulatorConfigs, configs)
-	if len(missing) == 0 {
-		return nil
+	if res == nil {
+		return nil, nil
 	}
 
-	hint := "no emulator configs exist in this namespace"
-	if len(available) > 0 {
-		hint = fmt.Sprintf("available: %s", strings.Join(available, ", "))
-	}
-
-	return fmt.Errorf("%s names Android emulator config(s) that do not exist in namespace %s: %s (%s)", env.OrkaEmulatorConfigsEnvName, client.envData.OrkaNamespace, strings.Join(missing, ", "), hint)
+	return *res, nil
 }
 
-// diffEmulatorConfigs returns the configured names absent from the cluster, and the names that do
-// exist, preserving the order each was given in.
-func diffEmulatorConfigs(configured []string, existing []*OrkaEmulatorConfigResponseModel) (missing []string, available []string) {
-	known := make(map[string]bool, len(existing))
-	available = make([]string, 0, len(existing))
-	for _, config := range existing {
-		known[config.Name] = true
-		available = append(available, config.Name)
-	}
-
-	missing = make([]string, 0, len(configured))
-	for _, name := range configured {
-		if !known[name] {
-			missing = append(missing, name)
+// EmulatorsForVM returns the emulators paired with exactly vmName. Matching is exact rather than by
+// prefix: VM foo-abcde must never select the emulators of foo-abcde2 or of a VM in another scale set
+// whose name happens to start the same way.
+func EmulatorsForVM(emulators []*OrkaEmulatorResponseModel, vmName string) []*OrkaEmulatorResponseModel {
+	var paired []*OrkaEmulatorResponseModel
+	for _, emulator := range emulators {
+		if emulator != nil && emulator.VM == vmName {
+			paired = append(paired, emulator)
 		}
 	}
 
-	return missing, available
+	return paired
+}
+
+// BelongsToScaleSet reports whether vmName was generated for the scale set. Generated names are the
+// scale set name, a dash, and a Kubernetes generated suffix with no dashes in it, so scale set foo
+// owns foo-abcde but not foo-bar-abcde, which belongs to scale set foo-bar.
+func BelongsToScaleSet(vmName, scaleSetName string) bool {
+	suffix, found := strings.CutPrefix(vmName, scaleSetName+"-")
+	return found && suffix != "" && !strings.Contains(suffix, "-")
 }
 
 func (client *OrkaClient) DeleteVM(ctx context.Context, name string) error {
-	out, err := exec.ExecStringCommand(cliBinary, []string{"vm", "delete", name, "--namespace", client.envData.OrkaNamespace})
+	out, err := exec.ExecStringCommand(ctx, cliBinary, []string{"vm", "delete", name, "--namespace", client.envData.OrkaNamespace})
 	if out == fmt.Sprintf("Successfully deleted vm %s", name) {
 		return nil
 	}
@@ -207,19 +196,19 @@ func NewOrkaClient(envData *env.Data, ctx context.Context) (*OrkaClient, error) 
 		return nil, fmt.Errorf("failed to connect to the Orka cluster: %s", err.Error())
 	}
 
-	_, err = exec.ExecStringCommand(cliBinary, []string{"config", "set", "--api-url", envData.OrkaURL})
+	_, err = exec.ExecStringCommand(ctx, cliBinary, []string{"config", "set", "--api-url", envData.OrkaURL})
 	if err != nil {
 		return nil, err
 	}
 
-	_, err = exec.ExecStringCommand(cliBinary, []string{"user", "set-token", envData.OrkaToken})
+	_, err = exec.ExecStringCommand(ctx, cliBinary, []string{"user", "set-token", envData.OrkaToken})
 	if err != nil {
 		return nil, err
 	}
 
 	// The purpose of this call is to check the permissions of the provided token.
 	// If the command fails with an "Unauthorized" error, it indicates that the provided token is not valid.
-	_, err = exec.ExecStringCommand(cliBinary, []string{"node", "list", "--namespace", envData.OrkaNamespace})
+	_, err = exec.ExecStringCommand(ctx, cliBinary, []string{"node", "list", "--namespace", envData.OrkaNamespace})
 	if err != nil {
 		if strings.Contains(err.Error(), "Unauthorized") {
 			return nil, fmt.Errorf("the provided token is not valid. Please provide a valid token")
@@ -228,21 +217,9 @@ func NewOrkaClient(envData *env.Data, ctx context.Context) (*OrkaClient, error) 
 		return nil, err
 	}
 
-	orkaClient := &OrkaClient{
+	return &OrkaClient{
 		envData: envData,
-	}
-
-	if len(envData.OrkaEmulatorConfigs) > 0 {
-		if err := orkaClient.verifyEmulatorConfigs(ctx); err != nil {
-			return nil, err
-		}
-	} else if len(envData.OrkaEmulators) > 0 {
-		if err := orkaClient.verifyEmulatorSupport(ctx); err != nil {
-			return nil, err
-		}
-	}
-
-	return orkaClient, nil
+	}, nil
 }
 
 type OrkaTransport struct {

@@ -2,6 +2,7 @@ package env
 
 import (
 	"testing"
+	"time"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -13,57 +14,6 @@ func TestEnv(t *testing.T) {
 }
 
 var _ = Describe("Env Test", func() {
-
-	DescribeTable("when parsing a comma separated env",
-		func(input string, expected []string) {
-			Expect(parseCommaSeparated(input)).To(Equal(expected))
-		},
-		Entry("with a single name, should be one entry", "pixel8-api36", []string{"pixel8-api36"}),
-		Entry("with several names, should keep order", "pixel8-api36,tablet-api35", []string{"pixel8-api36", "tablet-api35"}),
-		Entry("with spaces around names, should trim them", " pixel8-api36 , tablet-api35 ", []string{"pixel8-api36", "tablet-api35"}),
-		Entry("with a repeated name, should keep both entries", "pixel8-api36,pixel8-api36", []string{"pixel8-api36", "pixel8-api36"}),
-		Entry("with an empty string, should be nil so the feature stays off", "", nil),
-		Entry("with only whitespace, should be nil so the feature stays off", "   ", nil),
-		Entry("with a trailing comma, should keep the empty entry for validation to reject", "pixel8-api36,", []string{"pixel8-api36", ""}),
-		Entry("with an empty middle entry, should keep it for validation to reject", "a,,b", []string{"a", "", "b"}),
-	)
-
-	DescribeTable("when validating emulator configs",
-		func(configs []string, timeout int, expectError bool) {
-			envData := &Data{
-				GitHubURL:                 "https://github.com/my-org",
-				OrkaURL:                   "http://10.0.0.1",
-				OrkaToken:                 "token",
-				OrkaVMConfig:              "my-vm-config",
-				OrkaEmulatorConfigs:       configs,
-				OrkaEmulatorDeployTimeout: timeout,
-			}
-
-			errs := validateEnv(envData)
-
-			if expectError {
-				Expect(errs).ToNot(BeEmpty())
-			} else {
-				Expect(errs).To(BeEmpty())
-			}
-		},
-		Entry("with no configs, should be valid and the feature off", nil, 10, false),
-		Entry("with one config, should be valid", []string{"pixel8-api36"}, 10, false),
-		Entry("with several configs, should be valid", []string{"pixel8-api36", "tablet-api35"}, 10, false),
-		Entry("with an empty entry, should be invalid", []string{"pixel8-api36", ""}, 10, true),
-		Entry("with a zero timeout while enabled, should be invalid", []string{"pixel8-api36"}, 0, true),
-		Entry("with a negative timeout while enabled, should be invalid", []string{"pixel8-api36"}, -1, true),
-		Entry("with a zero timeout while disabled, should be valid", nil, 0, false),
-	)
-
-	DescribeTable("when reporting whether emulators are enabled",
-		func(configs []string, expected bool) {
-			Expect((&Data{OrkaEmulatorConfigs: configs}).EmulatorsEnabled()).To(Equal(expected))
-		},
-		Entry("with no configs, should be disabled", nil, false),
-		Entry("with an empty slice, should be disabled", []string{}, false),
-		Entry("with one config, should be enabled", []string{"pixel8-api36"}, true),
-	)
 
 	DescribeTable("when validating the metadata env",
 		func(input string, expected bool) {
@@ -101,33 +51,23 @@ var _ = Describe("Env Test", func() {
 var _ = Describe("Emulator env", func() {
 	baseData := func() *Data {
 		return &Data{
-			GitHubURL:                 "https://github.com/my-org",
-			OrkaURL:                   "http://10.0.0.1",
-			OrkaToken:                 "token",
-			OrkaVMConfig:              "my-vm-config",
-			OrkaEmulatorDeployTimeout: 10,
+			GitHubURL:                     "https://github.com/my-org",
+			OrkaURL:                       "http://10.0.0.1",
+			OrkaToken:                     "token",
+			OrkaVMConfig:                  "my-vm-config",
+			OrkaEmulatorDeployTimeout:     10,
+			EmulatorConfigRefreshInterval: 60 * time.Second,
 		}
 	}
 
-	It("rejects setting both the config list and the inline list", func() {
-		data := baseData()
-		data.OrkaEmulatorConfigs = []string{"pixel8-api36"}
-		data.OrkaEmulators = []EmulatorSpec{{Platform: "android-36", ImageType: "google_apis"}}
-
-		Expect(validateEnv(data)).ToNot(BeEmpty())
+	It("accepts the defaults", func() {
+		Expect(validateEnv(baseData())).To(BeEmpty())
 	})
 
-	It("accepts the inline list on its own", func() {
-		data := baseData()
-		data.OrkaEmulators = []EmulatorSpec{{Platform: "android-36", ImageType: "google_apis", DeviceProfile: "pixel_8"}}
-
-		Expect(validateEnv(data)).To(BeEmpty())
-	})
-
-	DescribeTable("requires platform and image type on every inline entry",
-		func(spec EmulatorSpec, valid bool) {
+	DescribeTable("requires a positive deploy timeout",
+		func(timeout int, valid bool) {
 			data := baseData()
-			data.OrkaEmulators = []EmulatorSpec{spec}
+			data.OrkaEmulatorDeployTimeout = timeout
 
 			if valid {
 				Expect(validateEnv(data)).To(BeEmpty())
@@ -135,20 +75,36 @@ var _ = Describe("Emulator env", func() {
 				Expect(validateEnv(data)).ToNot(BeEmpty())
 			}
 		},
-		Entry("with both set, should be valid", EmulatorSpec{Platform: "android-36", ImageType: "google_apis"}, true),
-		Entry("with no platform, should be invalid", EmulatorSpec{ImageType: "google_apis"}, false),
-		Entry("with no image type, should be invalid", EmulatorSpec{Platform: "android-36"}, false),
-		Entry("with neither, should be invalid", EmulatorSpec{DeviceProfile: "pixel_8"}, false),
+		Entry("with a positive timeout, should be valid", 10, true),
+		Entry("with a zero timeout, should be invalid", 0, false),
+		Entry("with a negative timeout, should be invalid", -1, false),
 	)
 
-	DescribeTable("counts emulators from whichever list is in use",
-		func(configs []string, inline []EmulatorSpec, expected int, enabled bool) {
-			data := &Data{OrkaEmulatorConfigs: configs, OrkaEmulators: inline}
-			Expect(data.EmulatorCount()).To(Equal(expected))
-			Expect(data.EmulatorsEnabled()).To(Equal(enabled))
+	DescribeTable("requires a positive refresh interval",
+		func(interval time.Duration, valid bool) {
+			data := baseData()
+			data.EmulatorConfigRefreshInterval = interval
+
+			if valid {
+				Expect(validateEnv(data)).To(BeEmpty())
+			} else {
+				Expect(validateEnv(data)).ToNot(BeEmpty())
+			}
 		},
-		Entry("with neither set", nil, nil, 0, false),
-		Entry("with two named configs", []string{"a", "b"}, nil, 2, true),
-		Entry("with one inline spec", nil, []EmulatorSpec{{Platform: "android-36", ImageType: "google_apis"}}, 1, true),
+		Entry("with a positive interval, should be valid", 30*time.Second, true),
+		Entry("with a zero interval, should be invalid", time.Duration(0), false),
+		Entry("with a negative interval, should be invalid", -time.Second, false),
+	)
+
+	DescribeTable("flags a deploy timeout that cannot outlast the operator's unschedulable timeout",
+		func(timeout int, tooShort bool) {
+			data := baseData()
+			data.OrkaEmulatorDeployTimeout = timeout
+			Expect(data.EmulatorDeployTimeoutTooShort()).To(Equal(tooShort))
+		},
+		Entry("with the default of 10 minutes, should be fine", 10, false),
+		Entry("with 6 minutes, should be fine", 6, false),
+		Entry("with exactly 5 minutes, should race the operator", 5, true),
+		Entry("with 3 minutes, should be too short", 3, true),
 	)
 })

@@ -13,9 +13,11 @@ import (
 	"sync"
 	"time"
 
+	backoff "github.com/cenkalti/backoff/v4"
 	"github.com/google/uuid"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
+	"github.com/macstadium/orka-github-actions-integration/pkg/metrics"
 	"github.com/macstadium/orka-github-actions-integration/pkg/orka"
 	"golang.org/x/crypto/ssh"
 )
@@ -43,7 +45,25 @@ func (k jobIdentity) String() string {
 	return fmt.Sprintf("jobId=%s runnerRequestId=%d", k.jobId, k.runnerRequestId)
 }
 
-func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerInterface, runnerProvisioner RunnerProvisionerInterface, vmTracker *VMTracker, runnerScaleSet *types.RunnerScaleSet) *RunnerMessageProcessor {
+// maxProvisionAttempts bounds how many times a job's runner is provisioned before giving up.
+const maxProvisionAttempts = 5
+
+// defaultProvisionBackoff waits 15s, 30s, 60s, then 120s (with jitter) between attempts, so a
+// transient failure clears quickly while a node that stays full is not hammered.
+func defaultProvisionBackoff() backoff.BackOff {
+	b := backoff.NewExponentialBackOff()
+	b.InitialInterval = 15 * time.Second
+	b.Multiplier = 2
+	b.MaxInterval = 2 * time.Minute
+	// The attempt cap bounds the retries, not elapsed time.
+	b.MaxElapsedTime = 0
+	b.Reset()
+
+	return b
+}
+
+// NewRunnerMessageProcessor builds a processor. m may be nil, in which case nothing is recorded.
+func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerInterface, runnerProvisioner RunnerProvisionerInterface, vmTracker *VMTracker, runnerScaleSet *types.RunnerScaleSet, m *metrics.Metrics) *RunnerMessageProcessor {
 	return &RunnerMessageProcessor{
 		ctx:                       ctx,
 		runnerManager:             runnerManager,
@@ -51,10 +71,13 @@ func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerI
 		logger:                    logging.Logger.Named(fmt.Sprintf("runner-message-processor-%d", runnerScaleSet.Id)),
 		runnerScaleSetName:        runnerScaleSet.Name,
 		upstreamCanceledJobs:      map[jobIdentity]bool{},
+		provisionAttemptCancels:   map[jobIdentity]context.CancelFunc{},
 		upstreamCanceledJobsMutex: sync.RWMutex{},
 		runnerContextCancels:      map[string]context.CancelFunc{},
 		runnerContextCancelsMutex: sync.Mutex{},
 		vmTracker:                 vmTracker,
+		metrics:                   m,
+		newProvisionBackoff:       defaultProvisionBackoff,
 	}
 }
 
@@ -271,9 +294,26 @@ func (p *RunnerMessageProcessor) startRunner(job jobIdentity) {
 	executionErr = p.executeJobCommands(runnerContext, job, executor, commands)
 }
 
+// provisionRunnerWithRetry provisions a runner for job, retrying with backoff up to
+// maxProvisionAttempts times. Each attempt runs under its own context, which is cancelled if the job
+// is canceled upstream, so a long emulator deploy stops as soon as nobody needs the runner.
+//
+// Giving up leaves the job queued in GitHub. Provisioning only starts from a JobAssigned message or
+// the session's first message, so nothing retries it until another job is assigned to this scale
+// set or the runner restarts; hence the error log and the exhausted metric.
 func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, job jobIdentity) (*orka.VMCommandExecutor, []string, error) {
-	for attempt := 1; !p.isUpstreamCanceled(job); attempt++ {
-		executor, commands, err := p.runnerProvisioner.ProvisionRunner(ctx)
+	retryBackoff := p.newProvisionBackoff()
+	var lastErr error
+
+	for attempt := 1; attempt <= maxProvisionAttempts; attempt++ {
+		attemptCtx, ok := p.beginProvisionAttempt(ctx, job)
+		if !ok {
+			return nil, nil, fmt.Errorf("job %s was canceled upstream: %w", job, context.Canceled)
+		}
+
+		executor, commands, err := p.runnerProvisioner.ProvisionRunner(attemptCtx)
+		p.endProvisionAttempt(job)
+
 		if ctx.Err() != nil {
 			return nil, nil, ctx.Err()
 		}
@@ -282,22 +322,73 @@ func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, j
 			return executor, commands, nil
 		}
 
+		if p.isUpstreamCanceled(job) {
+			return nil, nil, fmt.Errorf("job %s was canceled upstream during provisioning: %w", job, context.Canceled)
+		}
+
+		lastErr = err
 		p.logger.Errorf(
-			"unable to provision Orka runner for %s and job %s (attempt %d). More information: %v",
+			"unable to provision Orka runner for %s and job %s (attempt %d/%d). More information: %v",
 			p.runnerScaleSetName,
 			job,
 			attempt,
+			maxProvisionAttempts,
 			err,
 		)
+
+		if attempt == maxProvisionAttempts {
+			break
+		}
+
+		wait := retryBackoff.NextBackOff()
+		if wait == backoff.Stop {
+			break
+		}
 
 		select {
 		case <-ctx.Done():
 			return nil, nil, ctx.Err()
-		case <-time.After(15 * time.Second):
+		case <-time.After(wait):
 		}
 	}
 
-	return nil, nil, fmt.Errorf("unable to provision Orka runner for %s and job %s", p.runnerScaleSetName, job)
+	p.logger.Errorf(
+		"giving up on provisioning a runner for %s and job %s after %d attempts. The job stays queued in GitHub until another job is assigned to this scale set or the runner restarts. Last error: %v",
+		p.runnerScaleSetName,
+		job,
+		maxProvisionAttempts,
+		lastErr,
+	)
+	p.metrics.IncRunnerProvisionExhausted()
+
+	return nil, nil, fmt.Errorf("unable to provision Orka runner for %s and job %s after %d attempts: %w", p.runnerScaleSetName, job, maxProvisionAttempts, lastErr)
+}
+
+// beginProvisionAttempt derives the context for one provisioning attempt and registers its cancel
+// func, unless the job has already been canceled upstream. The check and the registration share a
+// lock with setUpstreamCanceledJob, so a cancellation can never slip in between them unnoticed.
+func (p *RunnerMessageProcessor) beginProvisionAttempt(ctx context.Context, job jobIdentity) (context.Context, bool) {
+	p.upstreamCanceledJobsMutex.Lock()
+	defer p.upstreamCanceledJobsMutex.Unlock()
+
+	if p.upstreamCanceledJobs[job] {
+		return nil, false
+	}
+
+	attemptCtx, cancel := context.WithCancel(ctx)
+	p.provisionAttemptCancels[job] = cancel
+
+	return attemptCtx, true
+}
+
+func (p *RunnerMessageProcessor) endProvisionAttempt(job jobIdentity) {
+	p.upstreamCanceledJobsMutex.Lock()
+	defer p.upstreamCanceledJobsMutex.Unlock()
+
+	if cancel, ok := p.provisionAttemptCancels[job]; ok {
+		cancel()
+		delete(p.provisionAttemptCancels, job)
+	}
 }
 
 func (p *RunnerMessageProcessor) executeJobCommands(ctx context.Context, job jobIdentity, executor *orka.VMCommandExecutor, commands []string) error {
@@ -328,6 +419,13 @@ func (p *RunnerMessageProcessor) setUpstreamCanceledJob(job jobIdentity) {
 	p.upstreamCanceledJobsMutex.Lock()
 	defer p.upstreamCanceledJobsMutex.Unlock()
 	p.upstreamCanceledJobs[job] = true
+
+	// Stop an attempt that is still deploying, which may be minutes into an emulator deploy. The
+	// provisioner cleans up whatever it had brought up.
+	if cancel, ok := p.provisionAttemptCancels[job]; ok {
+		p.logger.Infof("interrupting in-flight provisioning for %s, which was canceled upstream", job)
+		cancel()
+	}
 }
 
 func (p *RunnerMessageProcessor) removeUpstreamCanceledJob(job jobIdentity) {
