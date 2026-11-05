@@ -298,9 +298,11 @@ func (p *RunnerMessageProcessor) startRunner(job jobIdentity) {
 // maxProvisionAttempts times. Each attempt runs under its own context, which is cancelled if the job
 // is canceled upstream, so a long emulator deploy stops as soon as nobody needs the runner.
 //
-// Giving up leaves the job queued in GitHub. Provisioning only starts from a JobAssigned message or
-// the session's first message, so nothing retries it until another job is assigned to this scale
-// set or the runner restarts; hence the error log and the exhausted metric.
+// Giving up does not strand the job. GitHub cancels an assignment that no runner picks up within
+// about 5 minutes and reissues the job under a new job ID, which arrives as a fresh JobAssigned and
+// starts a new round of attempts. Because the backoff alone waits nearly 4 minutes, that reissue
+// usually cancels a round before its last attempt, so the cap mostly ends rounds whose attempts fail
+// fast. The error log and the exhausted metric record the rounds that do run out.
 func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, job jobIdentity) (*orka.VMCommandExecutor, []string, error) {
 	retryBackoff := p.newProvisionBackoff()
 	var lastErr error
@@ -352,12 +354,13 @@ func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, j
 		}
 	}
 
+	// The last attempt's error was logged just above, and the caller logs the returned error, so it
+	// is not repeated here.
 	p.logger.Errorf(
-		"giving up on provisioning a runner for %s and job %s after %d attempts. The job stays queued in GitHub until another job is assigned to this scale set or the runner restarts. Last error: %v",
+		"giving up on provisioning a runner for %s and job %s after %d attempts. GitHub reissues the job if no runner picks it up within about 5 minutes, which starts a new round of attempts.",
 		p.runnerScaleSetName,
 		job,
 		maxProvisionAttempts,
-		lastErr,
 	)
 	p.metrics.IncRunnerProvisionExhausted()
 

@@ -250,7 +250,7 @@ var _ = Describe("Provisioning with emulators", func() {
 		}
 
 		_, _, err := p.ProvisionRunner(ctx)
-		Expect(err).To(MatchError(ContainSubstring("foo-emulator-tablet")))
+		Expect(err).To(MatchError("1 of 3 emulator(s) paired with VM foo-abcde failed to deploy on node mini-arm-36 (1 failed for other reasons): emulator foo-abcde-emu-2 (foo-emulator-tablet): boom"))
 
 		Expect(fake.deployCount()).To(Equal(3))
 		Expect(fake.sortedDeletedEmulators()).To(Equal([]string{"foo-abcde-emu-1", "foo-abcde-emu-3"}))
@@ -278,6 +278,42 @@ var _ = Describe("Provisioning with emulators", func() {
 		_, _, err := p.ProvisionRunner(ctx)
 		Expect(errors.Is(err, ErrEmulatorCapacity)).To(BeTrue())
 		Expect(fake.deletedVMs).To(Equal([]string{vmName}))
+	})
+
+	It("reports a full node on one line however many emulators fail", func() {
+		for i := range 20 {
+			suffix := string(rune('a' + i))
+			source.refs[vmConfig] = append(source.refs[vmConfig], emulator.EmulatorRef{Config: "foo-emulator-" + suffix, Suffix: suffix})
+		}
+		fake.deployEmulatorFunc = func(ctx context.Context, name, vm, config string) (*orka.OrkaEmulatorResponseModel, error) {
+			return nil, fmt.Errorf(`Error: failed to create AVD "orka-default-%s" for VM "orka-default-%s": rpc error: code = DeadlineExceeded desc = context deadline exceeded`, name, vm)
+		}
+
+		_, _, err := p.ProvisionRunner(ctx)
+
+		Expect(err.Error()).ToNot(ContainSubstring("\n"))
+		Expect(err.Error()).To(HavePrefix("20 of 20 emulator(s) paired with VM foo-abcde failed to deploy on node mini-arm-36 (20 had no room on the node): emulator foo-abcde-emu-1 (foo-emulator-a): insufficient Android emulator capacity: "))
+		Expect(strings.Count(err.Error(), "failed to create AVD")).To(Equal(1))
+		Expect(errors.Is(err, ErrEmulatorCapacity)).To(BeTrue())
+	})
+
+	It("quotes a failure that is not about capacity when a burst fails both ways", func() {
+		source.refs[vmConfig] = []emulator.EmulatorRef{
+			{Config: "foo-emulator", Suffix: ""},
+			{Config: "foo-emulator-tablet", Suffix: "tablet"},
+			{Config: "foo-emulator-wear", Suffix: "wear"},
+		}
+		fake.deployEmulatorFunc = func(ctx context.Context, name, vm, config string) (*orka.OrkaEmulatorResponseModel, error) {
+			if config == "foo-emulator-wear" {
+				return nil, errors.New(`Error: androidemulatorconfigs.orka.macstadium.com "foo-emulator-wear" not found`)
+			}
+			return nil, errors.New("0/3 nodes are available: 1 Insufficient orka.macstadium.com/emulator")
+		}
+
+		_, _, err := p.ProvisionRunner(ctx)
+
+		Expect(err).To(MatchError(`3 of 3 emulator(s) paired with VM foo-abcde failed to deploy on node mini-arm-36 (2 had no room on the node, 1 failed for other reasons): emulator foo-abcde-emu-3 (foo-emulator-wear): Error: androidemulatorconfigs.orka.macstadium.com "foo-emulator-wear" not found`))
+		Expect(errors.Is(err, ErrEmulatorCapacity)).To(BeTrue())
 	})
 
 	It("kills an in-flight deploy when the context is cancelled and still cleans up", func() {

@@ -75,9 +75,9 @@ func (p *RunnerProvisioner) deployEmulators(ctx context.Context, vmName, node st
 
 	wg.Wait()
 
-	if err := errors.Join(failures...); err != nil {
-		if errors.Is(err, ErrEmulatorCapacity) {
-			p.logger.Errorf("insufficient Android emulator capacity on node %s: it has no room for all %d emulator(s) paired with VM %s", node, len(refs), vmName)
+	if err := newEmulatorDeployError(vmName, node, len(refs), failures); err != nil {
+		for _, failure := range err.failures {
+			p.logger.Debugf("emulator deploy failed for VM %s: %v", vmName, failure)
 		}
 
 		return nil, err
@@ -122,6 +122,71 @@ func (p *RunnerProvisioner) deployEmulator(ctx context.Context, vmName, name str
 	*out = provisionedEmulator{ref: ref, emulator: deployed}
 
 	return nil
+}
+
+// emulatorDeployError reports a failed emulator burst on one line. A full node fails every emulator
+// with near-identical CLI output, so printing each failure would turn one attempt into dozens of long
+// log lines. The individual failures stay reachable through Unwrap, so errors.Is still finds
+// ErrEmulatorCapacity or a cancellation, and are logged at debug level.
+type emulatorDeployError struct {
+	vmName   string
+	node     string
+	total    int
+	failures []error
+}
+
+// newEmulatorDeployError collects the non-nil failures from a burst of total deploys, or returns nil
+// if every deploy succeeded.
+func newEmulatorDeployError(vmName, node string, total int, results []error) *emulatorDeployError {
+	var failures []error
+	for _, err := range results {
+		if err != nil {
+			failures = append(failures, err)
+		}
+	}
+
+	if len(failures) == 0 {
+		return nil
+	}
+
+	return &emulatorDeployError{vmName: vmName, node: node, total: total, failures: failures}
+}
+
+// Error summarizes the burst and quotes one failure in full, preferring one that is not a capacity
+// failure, since that is the one a person needs to look at.
+func (e *emulatorDeployError) Error() string {
+	capacity := 0
+	var example error
+
+	for _, failure := range e.failures {
+		if errors.Is(failure, ErrEmulatorCapacity) {
+			capacity++
+			continue
+		}
+
+		if example == nil {
+			example = failure
+		}
+	}
+
+	if example == nil {
+		example = e.failures[0]
+	}
+
+	var counts []string
+	if capacity > 0 {
+		counts = append(counts, fmt.Sprintf("%d had no room on the node", capacity))
+	}
+	if other := len(e.failures) - capacity; other > 0 {
+		counts = append(counts, fmt.Sprintf("%d failed for other reasons", other))
+	}
+
+	return fmt.Sprintf("%d of %d emulator(s) paired with VM %s failed to deploy on node %s (%s): %v",
+		len(e.failures), e.total, e.vmName, e.node, strings.Join(counts, ", "), example)
+}
+
+func (e *emulatorDeployError) Unwrap() []error {
+	return e.failures
 }
 
 // classifyDeployError sorts a failed emulator deploy into a metric result. Two failures mean the

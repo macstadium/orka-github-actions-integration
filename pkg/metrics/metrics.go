@@ -108,7 +108,7 @@ func New(runnerName string) *Metrics {
 
 		runnerProvisionExhausted: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "runner_provision_exhausted_total",
-			Help: "Jobs whose runner could not be provisioned within the retry limit and were left queued",
+			Help: "Rounds of provisioning attempts for a job that all failed before GitHub reissued the job",
 		}, []string{"runner_name"}),
 	}
 

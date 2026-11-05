@@ -176,7 +176,7 @@ jobs:
 * **Apple silicon only.** Emulators run as host processes on Apple silicon nodes. Intel nodes cannot run them.
 * **`adb` must be available inside the VM.** Either bake the Android platform tools into your VM image or install them in the workflow, for example with `android-actions/setup-android`.
 * **Emulators are per runner, not per job.** A runner scale set is a homogeneous pool, so every job on a given runner gets the same emulators. To offer different device targets, run another instance of the Orka GitHub runner with its own runner name and its own `ORKA_VM_CONFIG`, and create emulator configs named after that VM config.
-* **All or nothing.** A job written against several emulators cannot run against fewer, so if any one emulator fails to deploy, the runner deletes the VM and every emulator it had brought up, then retries with a new VM. It makes up to 5 attempts with increasing waits between them. After the fifth failure it logs an error and counts it in the `runner_provision_exhausted_total` metric, and the job stays queued in GitHub until another job is assigned to the runner or the runner restarts.
+* **All or nothing.** A job written against several emulators cannot run against fewer, so if any one emulator fails to deploy, the runner deletes the VM and every emulator it had brought up, then retries with a new VM. It makes up to 5 attempts with increasing waits between them. After the fifth failure it logs an error and counts it in the `runner_provision_exhausted_total` metric. Giving up does not strand the job: GitHub cancels a job assignment that no runner picks up within about 5 minutes and reissues the job under a new ID, and the runner starts a new round of attempts for it. Because the waits between attempts add up to nearly 4 minutes, the reissue often arrives before the fifth attempt. The runner then stops the round in progress and cleans up its VM and emulators, and the metric is not incremented.
 * **The first deploy of a platform on a node is slow.** The Android system image is downloaded on demand the first time a given platform and image type is used on a node, which is why `ORKA_EMULATOR_DEPLOY_TIMEOUT` defaults to 10 minutes. Later deploys on the same node reuse it.
 * **Each node hosts a limited number of emulators.** Every emulator runs on the same node as its paired VM, and a node can host only so many. When a node is full, the deploy fails within about 30 seconds, the failure is counted as `result="capacity"` in the `emulator_deploy_total` metric, and the runner retries with a new VM, which may land on another node.
 
@@ -190,7 +190,7 @@ With `ENABLE_METRICS=true`, these series are exported alongside the scale set st
 | `emulator_deploy_duration_seconds` | Time taken by each emulator deploy |
 | `emulator_orphans_reaped_total` | Emulators deleted at startup because their paired VM no longer exists |
 | `emulator_dangling_configs` | Emulator configs whose name matches no VM config in the cluster |
-| `runner_provision_exhausted_total` | Jobs whose runner could not be provisioned within 5 attempts and were left queued |
+| `runner_provision_exhausted_total` | Rounds of 5 provisioning attempts that all failed before GitHub reissued the job |
 
 #### How to use multiple runners
 
