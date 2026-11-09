@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sync/atomic"
+	"time"
 
 	backoff "github.com/cenkalti/backoff/v4"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
@@ -24,6 +25,22 @@ func (f *fakeProvisioner) ProvisionRunner(ctx context.Context) (*orka.VMCommandE
 }
 
 func (f *fakeProvisioner) CleanupResources(ctx context.Context, runnerName string) {}
+
+// signalingBackOff waits a fixed time between attempts and reports each wait as it starts.
+type signalingBackOff struct {
+	wait    time.Duration
+	waiting chan struct{}
+}
+
+func (b *signalingBackOff) NextBackOff() time.Duration {
+	select {
+	case b.waiting <- struct{}{}:
+	default:
+	}
+	return b.wait
+}
+
+func (b *signalingBackOff) Reset() {}
 
 type countingRecorder struct {
 	exhausted atomic.Int32
@@ -101,6 +118,33 @@ var _ = Describe("Provisioning retries", func() {
 		Expect(recorder.exhausted.Load()).To(Equal(int32(0)))
 	})
 
+	It("stops waiting to retry when the job is canceled upstream", func() {
+		waiting := make(chan struct{}, 1)
+		processor.newProvisionBackoff = func() backoff.BackOff {
+			return &signalingBackOff{wait: time.Hour, waiting: waiting}
+		}
+		provisioner.provision = func(ctx context.Context, attempt int) (*orka.VMCommandExecutor, []string, error) {
+			return nil, nil, errors.New("node is full")
+		}
+		go func() {
+			<-waiting
+			processor.setUpstreamCanceledJob(job)
+		}()
+
+		errs := make(chan error, 1)
+		go func() {
+			_, _, err := processor.provisionRunnerWithRetry(context.Background(), job)
+			errs <- err
+		}()
+
+		var err error
+		Eventually(errs, 5*time.Second).Should(Receive(&err))
+		Expect(err).To(MatchError(ContainSubstring("canceled upstream while waiting to retry")))
+		Expect(errors.Is(err, context.Canceled)).To(BeTrue())
+		Expect(provisioner.attempts.Load()).To(Equal(int32(1)))
+		Expect(processor.provisionCancels).To(BeEmpty())
+	})
+
 	It("only interrupts the attempt for the job that was canceled", func() {
 		other := newJobIdentity("job-2", 43)
 		provisioner.provision = func(ctx context.Context, attempt int) (*orka.VMCommandExecutor, []string, error) {
@@ -130,7 +174,7 @@ var _ = Describe("Provisioning retries", func() {
 		processor.startRunner(job)
 
 		Expect(processor.provisioningInflight.Load()).To(Equal(int32(0)))
-		Expect(processor.provisionAttemptCancels).To(BeEmpty())
+		Expect(processor.provisionCancels).To(BeEmpty())
 		Expect(processor.upstreamCanceledJobs).To(BeEmpty())
 	})
 

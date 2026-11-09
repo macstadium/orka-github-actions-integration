@@ -71,7 +71,7 @@ func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerI
 		logger:                    logging.Logger.Named(fmt.Sprintf("runner-message-processor-%d", runnerScaleSet.Id)),
 		runnerScaleSetName:        runnerScaleSet.Name,
 		upstreamCanceledJobs:      map[jobIdentity]bool{},
-		provisionAttemptCancels:   map[jobIdentity]context.CancelFunc{},
+		provisionCancels:          map[jobIdentity]context.CancelFunc{},
 		upstreamCanceledJobsMutex: sync.RWMutex{},
 		runnerContextCancels:      map[string]context.CancelFunc{},
 		runnerContextCancelsMutex: sync.Mutex{},
@@ -295,8 +295,9 @@ func (p *RunnerMessageProcessor) startRunner(job jobIdentity) {
 }
 
 // provisionRunnerWithRetry provisions a runner for job, retrying with backoff up to
-// maxProvisionAttempts times. Each attempt runs under its own context, which is cancelled if the job
-// is canceled upstream, so a long emulator deploy stops as soon as nobody needs the runner.
+// maxProvisionAttempts times. The attempts and the waits between them share one context, which is
+// cancelled if the job is canceled upstream, so neither a long emulator deploy nor a wait of up to
+// two minutes outlives the job.
 //
 // Giving up does not strand the job. GitHub cancels an assignment that no runner picks up within
 // about 5 minutes and reissues the job under a new job ID, which arrives as a fresh JobAssigned and
@@ -304,17 +305,17 @@ func (p *RunnerMessageProcessor) startRunner(job jobIdentity) {
 // usually cancels a round before its last attempt, so the cap mostly ends rounds whose attempts fail
 // fast. The error log and the exhausted metric record the rounds that do run out.
 func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, job jobIdentity) (*orka.VMCommandExecutor, []string, error) {
+	jobCtx, ok := p.beginProvisioning(ctx, job)
+	if !ok {
+		return nil, nil, fmt.Errorf("job %s was canceled upstream: %w", job, context.Canceled)
+	}
+	defer p.endProvisioning(job)
+
 	retryBackoff := p.newProvisionBackoff()
 	var lastErr error
 
 	for attempt := 1; attempt <= maxProvisionAttempts; attempt++ {
-		attemptCtx, ok := p.beginProvisionAttempt(ctx, job)
-		if !ok {
-			return nil, nil, fmt.Errorf("job %s was canceled upstream: %w", job, context.Canceled)
-		}
-
-		executor, commands, err := p.runnerProvisioner.ProvisionRunner(attemptCtx)
-		p.endProvisionAttempt(job)
+		executor, commands, err := p.runnerProvisioner.ProvisionRunner(jobCtx)
 
 		if ctx.Err() != nil {
 			return nil, nil, ctx.Err()
@@ -348,8 +349,11 @@ func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, j
 		}
 
 		select {
-		case <-ctx.Done():
-			return nil, nil, ctx.Err()
+		case <-jobCtx.Done():
+			if ctx.Err() != nil {
+				return nil, nil, ctx.Err()
+			}
+			return nil, nil, fmt.Errorf("job %s was canceled upstream while waiting to retry: %w", job, context.Canceled)
 		case <-time.After(wait):
 		}
 	}
@@ -367,10 +371,10 @@ func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, j
 	return nil, nil, fmt.Errorf("unable to provision Orka runner for %s and job %s after %d attempts: %w", p.runnerScaleSetName, job, maxProvisionAttempts, lastErr)
 }
 
-// beginProvisionAttempt derives the context for one provisioning attempt and registers its cancel
-// func, unless the job has already been canceled upstream. The check and the registration share a
-// lock with setUpstreamCanceledJob, so a cancellation can never slip in between them unnoticed.
-func (p *RunnerMessageProcessor) beginProvisionAttempt(ctx context.Context, job jobIdentity) (context.Context, bool) {
+// beginProvisioning derives the context for provisioning a job and registers its cancel func, unless
+// the job has already been canceled upstream. The check and the registration share a lock with
+// setUpstreamCanceledJob, so a cancellation can never slip in between them unnoticed.
+func (p *RunnerMessageProcessor) beginProvisioning(ctx context.Context, job jobIdentity) (context.Context, bool) {
 	p.upstreamCanceledJobsMutex.Lock()
 	defer p.upstreamCanceledJobsMutex.Unlock()
 
@@ -378,19 +382,19 @@ func (p *RunnerMessageProcessor) beginProvisionAttempt(ctx context.Context, job 
 		return nil, false
 	}
 
-	attemptCtx, cancel := context.WithCancel(ctx)
-	p.provisionAttemptCancels[job] = cancel
+	jobCtx, cancel := context.WithCancel(ctx)
+	p.provisionCancels[job] = cancel
 
-	return attemptCtx, true
+	return jobCtx, true
 }
 
-func (p *RunnerMessageProcessor) endProvisionAttempt(job jobIdentity) {
+func (p *RunnerMessageProcessor) endProvisioning(job jobIdentity) {
 	p.upstreamCanceledJobsMutex.Lock()
 	defer p.upstreamCanceledJobsMutex.Unlock()
 
-	if cancel, ok := p.provisionAttemptCancels[job]; ok {
+	if cancel, ok := p.provisionCancels[job]; ok {
 		cancel()
-		delete(p.provisionAttemptCancels, job)
+		delete(p.provisionCancels, job)
 	}
 }
 
@@ -423,9 +427,9 @@ func (p *RunnerMessageProcessor) setUpstreamCanceledJob(job jobIdentity) {
 	defer p.upstreamCanceledJobsMutex.Unlock()
 	p.upstreamCanceledJobs[job] = true
 
-	// Stop an attempt that is still deploying, which may be minutes into an emulator deploy. The
-	// provisioner cleans up whatever it had brought up.
-	if cancel, ok := p.provisionAttemptCancels[job]; ok {
+	// Stop provisioning that is still running, which may be minutes into an emulator deploy or
+	// waiting to retry. The provisioner cleans up whatever it had brought up.
+	if cancel, ok := p.provisionCancels[job]; ok {
 		p.logger.Infof("interrupting in-flight provisioning for %s, which was canceled upstream", job)
 		cancel()
 	}

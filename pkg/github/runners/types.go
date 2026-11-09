@@ -57,9 +57,9 @@ type RunnerMessageProcessor struct {
 	runnerScaleSetName string
 
 	// upstreamCanceledJobsMutex guards both maps below, so marking a job canceled and cancelling
-	// its in-flight provisioning attempt happen together.
+	// its in-flight provisioning happen together.
 	upstreamCanceledJobs      map[jobIdentity]bool
-	provisionAttemptCancels   map[jobIdentity]context.CancelFunc
+	provisionCancels          map[jobIdentity]context.CancelFunc
 	upstreamCanceledJobsMutex sync.RWMutex
 
 	runnerContextCancels      map[string]context.CancelFunc
