@@ -32,9 +32,17 @@ type VMReconciler struct {
 	provisioner   *provisioner.RunnerProvisioner
 	adopt         func(vmName string)
 	envData       *env.Data
-	metrics       *metrics.Metrics
+	metrics       orphanRecorder
 	logger        *zap.SugaredLogger
 }
+
+// orphanRecorder is the slice of *metrics.Metrics the reconciler records into. A nil
+// *metrics.Metrics satisfies it and records nothing.
+type orphanRecorder interface {
+	AddEmulatorOrphansReaped(count int)
+}
+
+var _ orphanRecorder = (*metrics.Metrics)(nil)
 
 // NewVMReconciler builds a reconciler. m may be nil, in which case nothing is recorded.
 func NewVMReconciler(actionsClient actions.ActionsService, orkaClient orka.OrkaService, p *provisioner.RunnerProvisioner, adopt func(string), envData *env.Data, m *metrics.Metrics) *VMReconciler {
@@ -110,12 +118,16 @@ func (r *VMReconciler) sweepOrphanedEmulators(ctx context.Context, scaleSetName 
 
 	r.logger.Infof("reconciliation: deleting %d orphaned emulator(s) whose paired VM is gone: %s", len(orphaned), strings.Join(orphaned, ", "))
 
-	if err := r.orkaClient.DeleteEmulator(ctx, orphaned...); err != nil {
-		r.logger.Warnf("reconciliation: failed to delete orphaned emulator(s): %v", err)
-		return
+	reaped := 0
+	for _, name := range orphaned {
+		if err := r.orkaClient.DeleteEmulator(ctx, name); err != nil {
+			r.logger.Warnf("reconciliation: failed to delete orphaned emulator %s: %v", name, err)
+			continue
+		}
+		reaped++
 	}
 
-	r.metrics.AddEmulatorOrphansReaped(len(orphaned))
+	r.metrics.AddEmulatorOrphansReaped(reaped)
 }
 
 // orphanedEmulators selects emulators whose paired VM was generated for this scale set and is no

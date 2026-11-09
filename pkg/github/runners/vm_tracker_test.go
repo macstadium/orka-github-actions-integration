@@ -49,7 +49,7 @@ func (m *MockOrkaClient) ListVMConfigs(ctx context.Context) ([]*orka.OrkaVMConfi
 	return nil, nil
 }
 
-func (m *MockOrkaClient) DeleteEmulator(ctx context.Context, names ...string) error {
+func (m *MockOrkaClient) DeleteEmulator(ctx context.Context, name string) error {
 	return nil
 }
 

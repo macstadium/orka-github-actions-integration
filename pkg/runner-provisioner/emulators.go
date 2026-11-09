@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/emulator"
@@ -275,12 +276,27 @@ func (p *RunnerProvisioner) deleteEmulators(ctx context.Context, vmName string) 
 
 	p.logger.Infof("deleting emulator(s) %s for VM %s", strings.Join(names, ", "), vmName)
 
-	if err := p.orkaClient.DeleteEmulator(ctx, names...); err != nil {
-		p.logger.Warnf("failed to delete emulator(s) for VM %s, falling back to owner-reference cleanup when the VM is deleted: %v", vmName, err)
-		return
+	var wg sync.WaitGroup
+	var failed atomic.Int32
+
+	for _, name := range names {
+		wg.Add(1)
+
+		go func(name string) {
+			defer wg.Done()
+
+			if err := p.orkaClient.DeleteEmulator(ctx, name); err != nil {
+				p.logger.Warnf("failed to delete emulator %s for VM %s, falling back to owner-reference cleanup when the VM is deleted: %v", name, vmName, err)
+				failed.Add(1)
+			}
+		}(name)
 	}
 
-	p.logger.Infof("deleted emulator(s) for VM %s", vmName)
+	wg.Wait()
+
+	if failed.Load() == 0 {
+		p.logger.Infof("deleted emulator(s) for VM %s", vmName)
+	}
 }
 
 // roleFields are the variables exported per emulator under its config suffix, for workflows that

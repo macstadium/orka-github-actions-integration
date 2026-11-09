@@ -78,14 +78,14 @@ func (f *fakeOrka) DeployEmulator(ctx context.Context, name, vmName, config stri
 	return runningEmulator(name, vmName, 15555), nil
 }
 
-func (f *fakeOrka) DeleteEmulator(ctx context.Context, names ...string) error {
+func (f *fakeOrka) DeleteEmulator(ctx context.Context, name string) error {
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
 
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.deletedEmulators = append(f.deletedEmulators, names...)
+	f.deletedEmulators = append(f.deletedEmulators, name)
 	return nil
 }
 

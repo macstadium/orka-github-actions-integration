@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -23,7 +24,7 @@ type OrkaService interface {
 	ListVMs(ctx context.Context, namePrefix string) ([]*OrkaVMInfo, error)
 
 	DeployEmulator(ctx context.Context, name, vmName, config string) (*OrkaEmulatorResponseModel, error)
-	DeleteEmulator(ctx context.Context, names ...string) error
+	DeleteEmulator(ctx context.Context, name string) error
 	ListEmulators(ctx context.Context) ([]*OrkaEmulatorResponseModel, error)
 	ListEmulatorConfigs(ctx context.Context) ([]*OrkaEmulatorConfigResponseModel, error)
 	ListVMConfigs(ctx context.Context) ([]*OrkaVMConfigResponseModel, error)
@@ -88,24 +89,26 @@ func (client *OrkaClient) DeployEmulator(ctx context.Context, name, vmName, conf
 	return (*res)[0], nil
 }
 
-// DeleteEmulator removes the named emulators. A missing emulator is treated as success: the
-// operator garbage-collects emulators through the paired VM's owner reference, so by the time we
-// get here one may already be gone. The CLI reports that as the raw Kubernetes NotFound error,
-// androidemulatorinstances.orka.macstadium.com "<name>" not found.
-func (client *OrkaClient) DeleteEmulator(ctx context.Context, names ...string) error {
-	if len(names) == 0 {
-		return nil
-	}
-
-	args := append([]string{"emulator", "delete"}, names...)
-	args = append(args, "--namespace", client.envData.OrkaNamespace)
-
-	_, err := exec.ExecStringCommand(ctx, cliBinary, args)
-	if err != nil && strings.Contains(strings.ToLower(err.Error()), "not found") {
+// DeleteEmulator removes the named emulator. A missing emulator is treated as success: the operator
+// garbage-collects emulators through the paired VM's owner reference, so by the time we get here it
+// may already be gone. It deletes one emulator per call, so the outcome of each is known.
+func (client *OrkaClient) DeleteEmulator(ctx context.Context, name string) error {
+	_, err := exec.ExecStringCommand(ctx, cliBinary, []string{"emulator", "delete", name, "--namespace", client.envData.OrkaNamespace})
+	if err != nil && isEmulatorNotFound(err, name) {
 		return nil
 	}
 
 	return err
+}
+
+// isEmulatorNotFound reports whether err is the CLI's report that the named emulator does not exist,
+// the raw Kubernetes NotFound error androidemulatorinstances.orka.macstadium.com "<name>" not found.
+// It matches that wording for this name rather than any "not found", which would also swallow
+// failures such as a missing CLI binary. The quotes are optionally escaped, because the exec package
+// quotes the CLI's output into its error.
+func isEmulatorNotFound(err error, name string) bool {
+	pattern := `androidemulatorinstances\.orka\.macstadium\.com \\?"` + regexp.QuoteMeta(name) + `\\?" not found`
+	return regexp.MustCompile(pattern).MatchString(err.Error())
 }
 
 func (client *OrkaClient) ListEmulators(ctx context.Context) ([]*OrkaEmulatorResponseModel, error) {

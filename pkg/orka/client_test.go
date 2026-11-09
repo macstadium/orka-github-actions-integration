@@ -2,6 +2,8 @@ package orka
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"testing"
 
 	. "github.com/onsi/ginkgo/v2"
@@ -27,6 +29,28 @@ func names(emulators []*OrkaEmulatorResponseModel) []string {
 }
 
 var _ = Describe("Orka Test", func() {
+
+	DescribeTable("recognizing an emulator that is already gone",
+		func(err error, expected bool) {
+			Expect(isEmulatorNotFound(err, "foo-abcde-emu-1")).To(Equal(expected))
+		},
+		Entry("the NotFound the CLI prints, quoted into the exec error",
+			fmt.Errorf("command 'orka emulator delete foo-abcde-emu-1 --namespace orka-default' failed with output: %q, error: %v",
+				"Error: androidemulatorinstances.orka.macstadium.com \"foo-abcde-emu-1\" not found\n", "exit status 1"),
+			true),
+		Entry("the NotFound unquoted",
+			errors.New(`Error: androidemulatorinstances.orka.macstadium.com "foo-abcde-emu-1" not found`),
+			true),
+		Entry("a missing CLI binary",
+			errors.New(`command 'orka emulator delete foo-abcde-emu-1 --namespace orka-default' failed with output: "", error: exec: "orka": executable file not found in $PATH`),
+			false),
+		Entry("a NotFound for another emulator",
+			errors.New(`Error: androidemulatorinstances.orka.macstadium.com "foo-abcde-emu-12" not found`),
+			false),
+		Entry("a NotFound for something else",
+			errors.New(`Error: namespaces "orka-default" not found`),
+			false),
+	)
 
 	Describe("the emulator relay address", func() {
 		It("is unavailable when the emulator is still pending", func() {
