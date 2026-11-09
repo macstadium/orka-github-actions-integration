@@ -259,6 +259,8 @@ func (p *RunnerMessageProcessor) startRunner(job jobIdentity) {
 	if provisioningErr != nil {
 		if errors.Is(provisioningErr, context.Canceled) {
 			p.logger.Infof("provisioning canceled for %s", p.runnerScaleSetName)
+		} else if errors.Is(provisioningErr, errProvisioningPaused) {
+			p.logger.Warnf("not provisioning a runner for %s and job %s: %v. GitHub reissues the job if no runner picks it up within about 5 minutes.", p.runnerScaleSetName, job, provisioningErr)
 		} else {
 			p.logger.Errorf("unable to provision Orka runner for %s: %v", p.runnerScaleSetName, provisioningErr)
 		}
@@ -327,11 +329,16 @@ func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, j
 		return nil, nil, fmt.Errorf("job %s was canceled upstream: %w", job, context.Canceled)
 	}
 	defer p.endProvisioning(job)
+	defer p.capacityBreaker.release(job)
 
 	retryBackoff := p.newProvisionBackoff()
 	var lastErr error
 
 	for attempt := 1; attempt <= maxProvisionAttempts; attempt++ {
+		if !p.capacityBreaker.admit(job) {
+			return nil, nil, errProvisioningPaused
+		}
+
 		executor, commands, err := p.runnerProvisioner.ProvisionRunner(jobCtx)
 
 		if ctx.Err() != nil {
@@ -339,6 +346,7 @@ func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, j
 		}
 
 		if err == nil {
+			p.recordProvisionOutcome(nil)
 			return executor, commands, nil
 		}
 
@@ -346,6 +354,7 @@ func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, j
 			return nil, nil, fmt.Errorf("job %s was canceled upstream during provisioning: %w", job, context.Canceled)
 		}
 
+		p.recordProvisionOutcome(err)
 		lastErr = err
 		p.logger.Errorf(
 			"unable to provision Orka runner for %s and job %s (attempt %d/%d). More information: %v",
@@ -386,6 +395,26 @@ func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, j
 	p.metrics.IncRunnerProvisionExhausted()
 
 	return nil, nil, fmt.Errorf("unable to provision Orka runner for %s and job %s after %d attempts: %w", p.runnerScaleSetName, job, maxProvisionAttempts, lastErr)
+}
+
+// recordProvisionOutcome feeds an attempt's outcome to the capacity breaker and reports when that
+// opens or closes it.
+func (p *RunnerMessageProcessor) recordProvisionOutcome(err error) {
+	opened, closed := p.capacityBreaker.record(err)
+
+	switch {
+	case opened:
+		p.logger.Errorf(
+			"%d provisioning attempts in a row for %s failed because a node had no room for the paired Android emulators. Provisioning one job at a time until an attempt succeeds; the other jobs wait for GitHub to reissue them. Pair fewer emulators with the VM config or free capacity on the nodes. Last failure: %v",
+			capacityBreakerThreshold,
+			p.runnerScaleSetName,
+			err,
+		)
+		p.metrics.SetEmulatorCapacityBreakerOpen(true)
+	case closed:
+		p.logger.Infof("a runner for %s was provisioned, so every job is provisioned again", p.runnerScaleSetName)
+		p.metrics.SetEmulatorCapacityBreakerOpen(false)
+	}
 }
 
 // beginProvisioning derives the context for provisioning a job and registers its cancel func, unless

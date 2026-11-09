@@ -42,6 +42,7 @@ type RunnerProvisionerInterface interface {
 // *metrics.Metrics satisfies it and records nothing.
 type provisionRecorder interface {
 	IncRunnerProvisionExhausted()
+	SetEmulatorCapacityBreakerOpen(open bool)
 }
 
 var _ provisionRecorder = (*metrics.Metrics)(nil)
@@ -67,4 +68,6 @@ type RunnerMessageProcessor struct {
 
 	// newProvisionBackoff produces the wait between provisioning attempts. Tests shorten it.
 	newProvisionBackoff func() backoff.BackOff
+
+	capacityBreaker capacityBreaker
 }

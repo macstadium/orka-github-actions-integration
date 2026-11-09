@@ -38,6 +38,7 @@ type Metrics struct {
 	emulatorDeployDuration   *prometheus.HistogramVec
 	emulatorOrphansReaped    *prometheus.CounterVec
 	emulatorDanglingConfigs  *prometheus.GaugeVec
+	emulatorCapacityBreaker  *prometheus.GaugeVec
 	runnerProvisionExhausted *prometheus.CounterVec
 }
 
@@ -106,6 +107,11 @@ func New(runnerName string) *Metrics {
 			Help: "Android emulator configs whose name matches no VM config in the cluster",
 		}, []string{"runner_name"}),
 
+		emulatorCapacityBreaker: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "emulator_capacity_breaker_open",
+			Help: "1 while only one job at a time is provisioned because attempts keep failing for lack of Android emulator capacity",
+		}, []string{"runner_name"}),
+
 		runnerProvisionExhausted: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "runner_provision_exhausted_total",
 			Help: "Rounds of provisioning attempts for a job that all failed before GitHub reissued the job",
@@ -124,6 +130,7 @@ func New(runnerName string) *Metrics {
 		m.emulatorDeployDuration,
 		m.emulatorOrphansReaped,
 		m.emulatorDanglingConfigs,
+		m.emulatorCapacityBreaker,
 		m.runnerProvisionExhausted,
 	)
 
@@ -156,6 +163,20 @@ func (m *Metrics) SetEmulatorDanglingConfigs(count int) {
 	}
 
 	m.emulatorDanglingConfigs.WithLabelValues(m.runnerName).Set(float64(count))
+}
+
+// SetEmulatorCapacityBreakerOpen records whether the emulator capacity breaker is open.
+func (m *Metrics) SetEmulatorCapacityBreakerOpen(open bool) {
+	if m == nil {
+		return
+	}
+
+	value := 0.0
+	if open {
+		value = 1
+	}
+
+	m.emulatorCapacityBreaker.WithLabelValues(m.runnerName).Set(value)
 }
 
 // IncRunnerProvisionExhausted counts a job given up on after the provisioning retry limit.

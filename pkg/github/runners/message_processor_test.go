@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sync/atomic"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
 	"github.com/macstadium/orka-github-actions-integration/pkg/orka"
+	runnerprovisioner "github.com/macstadium/orka-github-actions-integration/pkg/runner-provisioner"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 )
@@ -71,11 +73,16 @@ func jobBase(messageType, jobId string, runnerRequestId int64) types.JobMessageB
 }
 
 type countingRecorder struct {
-	exhausted atomic.Int32
+	exhausted   atomic.Int32
+	breakerOpen atomic.Bool
 }
 
 func (c *countingRecorder) IncRunnerProvisionExhausted() {
 	c.exhausted.Add(1)
+}
+
+func (c *countingRecorder) SetEmulatorCapacityBreakerOpen(open bool) {
+	c.breakerOpen.Store(open)
 }
 
 var _ = Describe("Provisioning retries", func() {
@@ -214,6 +221,150 @@ var _ = Describe("Provisioning retries", func() {
 		}
 
 		Expect(func() { _, _, _ = processor.provisionRunnerWithRetry(context.Background(), job) }).ToNot(Panic())
+	})
+})
+
+var _ = Describe("The emulator capacity breaker", func() {
+	var (
+		provisioner *fakeProvisioner
+		recorder    *countingRecorder
+		processor   *RunnerMessageProcessor
+	)
+
+	capacityFailure := fmt.Errorf("1 of 3 emulator(s) paired with VM foo-abcde failed to deploy on node mini-arm-36: %w", runnerprovisioner.ErrEmulatorCapacity)
+	runner := &orka.VMCommandExecutor{VMName: "foo-abcde"}
+
+	BeforeEach(func() {
+		logging.SetupLogger("info")
+		provisioner = &fakeProvisioner{}
+		recorder = &countingRecorder{}
+		processor = NewRunnerMessageProcessor(context.Background(), nil, provisioner, nil, &types.RunnerScaleSet{Id: 1, Name: "foo"}, nil)
+		processor.metrics = recorder
+		processor.newProvisionBackoff = func() backoff.BackOff { return &backoff.ZeroBackOff{} }
+	})
+
+	// failRound runs one job through a full round of capacity failures, which opens the breaker.
+	failRound := func(job jobIdentity) {
+		provisioner.provision = func(ctx context.Context, attempt int) (*orka.VMCommandExecutor, []string, error) {
+			return nil, nil, capacityFailure
+		}
+
+		_, _, err := processor.provisionRunnerWithRetry(context.Background(), job)
+		Expect(errors.Is(err, runnerprovisioner.ErrEmulatorCapacity)).To(BeTrue())
+	}
+
+	It("lets one job at a time provision once capacity failures pile up, until one succeeds", func() {
+		failRound(newJobIdentity("job-1", 1))
+		Expect(recorder.breakerOpen.Load()).To(BeTrue())
+
+		probing := make(chan struct{})
+		release := make(chan struct{})
+		provisioner.provision = func(ctx context.Context, attempt int) (*orka.VMCommandExecutor, []string, error) {
+			close(probing)
+			<-release
+			return runner, nil, nil
+		}
+		probeErr := make(chan error, 1)
+		go func() {
+			_, _, err := processor.provisionRunnerWithRetry(context.Background(), newJobIdentity("job-2", 2))
+			probeErr <- err
+		}()
+		<-probing
+
+		attemptsBefore := provisioner.attempts.Load()
+		_, _, err := processor.provisionRunnerWithRetry(context.Background(), newJobIdentity("job-3", 3))
+		Expect(errors.Is(err, errProvisioningPaused)).To(BeTrue())
+		Expect(provisioner.attempts.Load()).To(Equal(attemptsBefore))
+
+		close(release)
+		Eventually(probeErr).Should(Receive(BeNil()))
+		Expect(recorder.breakerOpen.Load()).To(BeFalse())
+
+		provisioner.provision = func(ctx context.Context, attempt int) (*orka.VMCommandExecutor, []string, error) {
+			return runner, nil, nil
+		}
+		_, _, err = processor.provisionRunnerWithRetry(context.Background(), newJobIdentity("job-3", 3))
+		Expect(err).ToNot(HaveOccurred())
+	})
+
+	It("hands the probe to the next job once the probing job's round ends without a success", func() {
+		failRound(newJobIdentity("job-1", 1))
+
+		probing := make(chan struct{}, 1)
+		release := make(chan struct{})
+		provisioner.provision = func(ctx context.Context, attempt int) (*orka.VMCommandExecutor, []string, error) {
+			select {
+			case probing <- struct{}{}:
+			default:
+			}
+			<-release
+			return nil, nil, capacityFailure
+		}
+		probeDone := make(chan struct{})
+		go func() {
+			defer close(probeDone)
+			_, _, _ = processor.provisionRunnerWithRetry(context.Background(), newJobIdentity("job-2", 2))
+		}()
+		Eventually(probing).Should(Receive())
+
+		Expect(processor.capacityBreaker.admit(newJobIdentity("job-3", 3))).To(BeFalse())
+
+		close(release)
+		Eventually(probeDone).Should(BeClosed())
+
+		Expect(recorder.breakerOpen.Load()).To(BeTrue())
+		Expect(processor.capacityBreaker.admit(newJobIdentity("job-3", 3))).To(BeTrue())
+	})
+
+	It("does not count failures other than capacity", func() {
+		provisioner.provision = func(ctx context.Context, attempt int) (*orka.VMCommandExecutor, []string, error) {
+			return nil, nil, errors.New("vm deploy failed")
+		}
+		_, _, _ = processor.provisionRunnerWithRetry(context.Background(), newJobIdentity("job-1", 1))
+		_, _, _ = processor.provisionRunnerWithRetry(context.Background(), newJobIdentity("job-2", 2))
+
+		Expect(recorder.breakerOpen.Load()).To(BeFalse())
+		Expect(processor.capacityBreaker.admit(newJobIdentity("job-3", 3))).To(BeTrue())
+		Expect(processor.capacityBreaker.admit(newJobIdentity("job-4", 4))).To(BeTrue())
+	})
+
+	It("starts the count over after a success", func() {
+		job := newJobIdentity("job-1", 1)
+		provisioner.provision = func(ctx context.Context, attempt int) (*orka.VMCommandExecutor, []string, error) {
+			if attempt == capacityBreakerThreshold {
+				return runner, nil, nil
+			}
+			return nil, nil, capacityFailure
+		}
+		_, _, err := processor.provisionRunnerWithRetry(context.Background(), job)
+		Expect(err).ToNot(HaveOccurred())
+
+		failures := 0
+		provisioner.provision = func(ctx context.Context, attempt int) (*orka.VMCommandExecutor, []string, error) {
+			failures++
+			return nil, nil, capacityFailure
+		}
+		processor.newProvisionBackoff = func() backoff.BackOff {
+			return backoff.WithMaxRetries(&backoff.ZeroBackOff{}, capacityBreakerThreshold-2)
+		}
+		_, _, _ = processor.provisionRunnerWithRetry(context.Background(), newJobIdentity("job-2", 2))
+
+		Expect(failures).To(Equal(capacityBreakerThreshold - 1))
+		Expect(recorder.breakerOpen.Load()).To(BeFalse())
+	})
+
+	It("does not count a cancelled attempt", func() {
+		job := newJobIdentity("job-1", 1)
+		provisioner.provision = func(ctx context.Context, attempt int) (*orka.VMCommandExecutor, []string, error) {
+			processor.setUpstreamCanceledJob(job)
+			return nil, nil, capacityFailure
+		}
+		for range capacityBreakerThreshold {
+			_, _, _ = processor.provisionRunnerWithRetry(context.Background(), job)
+			processor.removeUpstreamCanceledJob(job)
+		}
+
+		Expect(recorder.breakerOpen.Load()).To(BeFalse())
 	})
 })
 
