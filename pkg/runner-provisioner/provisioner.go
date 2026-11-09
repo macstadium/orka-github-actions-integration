@@ -64,7 +64,10 @@ var commands_template = []string{
 
 func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) (*orka.VMCommandExecutor, []string, error) {
 	p.logger.Infof("deploying Orka VM with prefix %s", p.runnerScaleSet.Name)
-	vmResponse, err := p.orkaClient.DeployVM(ctx, p.runnerScaleSet.Name, p.envData.OrkaVMConfig)
+	// The VM deploy is not cancellable. The VM exists before the CLI returns, and its generated name
+	// is only known from the response, so killing the CLI midway would leak the VM with no cleanup
+	// registered. A cancellation instead takes effect just below, once cleanup is in place.
+	vmResponse, err := p.orkaClient.DeployVM(context.WithoutCancel(ctx), p.runnerScaleSet.Name, p.envData.OrkaVMConfig)
 	if err != nil {
 		p.logger.Errorf("failed to deploy Orka VM: %v", err)
 		return nil, nil, err
@@ -81,6 +84,11 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) (*orka.VMComman
 			p.cleanupResources(context.WithoutCancel(ctx), runnerName)
 		}
 	}()
+
+	if err := ctx.Err(); err != nil {
+		p.logger.Infof("provisioning of VM %s was cancelled while the VM was deploying", runnerName)
+		return nil, nil, err
+	}
 
 	vmIP, err := p.getRealVMIP(vmResponse.IP)
 	if err != nil {

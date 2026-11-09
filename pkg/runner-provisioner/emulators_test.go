@@ -27,6 +27,8 @@ type fakeOrka struct {
 
 	deployEmulatorFunc func(ctx context.Context, name, vmName, config string) (*orka.OrkaEmulatorResponseModel, error)
 	listEmulatorsFunc  func(ctx context.Context) ([]*orka.OrkaEmulatorResponseModel, error)
+	// duringVMDeploy runs while the VM deploy is in flight, after the VM exists.
+	duringVMDeploy func()
 
 	deployedEmulators map[string]string // emulator name -> config
 	deletedEmulators  []string
@@ -39,6 +41,15 @@ func newFakeOrka() *fakeOrka {
 }
 
 func (f *fakeOrka) DeployVM(ctx context.Context, namePrefix, vmConfig string) (*orka.OrkaVMDeployResponseModel, error) {
+	if f.duringVMDeploy != nil {
+		f.duringVMDeploy()
+	}
+
+	// The CLI is killed if its context is done before the deploy returns, and the VM is left behind.
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+
 	ssh := 8822
 	return &orka.OrkaVMDeployResponseModel{Name: namePrefix + "-abcde", Node: "mini-arm-36", IP: "10.221.190.36", SSH: &ssh, Status: orka.VMRunning}, nil
 }
@@ -348,6 +359,18 @@ var _ = Describe("Provisioning with emulators", func() {
 		Expect(errors.Is(err, context.Canceled)).To(BeTrue())
 		Expect(fake.sortedDeletedEmulators()).To(Equal([]string{"foo-abcde-emu-1"}))
 		Expect(fake.deletedVMs).To(Equal([]string{vmName}))
+	})
+
+	It("lets a cancelled VM deploy finish, then deletes the VM", func() {
+		source.refs[vmConfig] = []emulator.EmulatorRef{{Config: "foo-emulator"}}
+		attemptCtx, cancel := context.WithCancel(ctx)
+		fake.duringVMDeploy = cancel
+
+		_, _, err := p.ProvisionRunner(attemptCtx)
+		Expect(errors.Is(err, context.Canceled)).To(BeTrue())
+		Expect(fake.deployCount()).To(Equal(0))
+		Expect(fake.deletedVMs).To(Equal([]string{vmName}))
+		Expect(mockActions.CreateRunnerCalls).To(Equal(0))
 	})
 
 	Describe("cleanup", func() {
