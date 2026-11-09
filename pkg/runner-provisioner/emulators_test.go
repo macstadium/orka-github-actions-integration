@@ -20,7 +20,8 @@ import (
 )
 
 // fakeOrka records the emulator and VM calls the provisioner makes. Deploys run concurrently, so
-// every field is guarded by mu.
+// every field is guarded by mu. Like the real CLI, the emulator list and delete fail once their
+// context is done, so a test can tell whether cleanup ran under a context that outlives the attempt.
 type fakeOrka struct {
 	mu sync.Mutex
 
@@ -67,6 +68,10 @@ func (f *fakeOrka) DeployEmulator(ctx context.Context, name, vmName, config stri
 }
 
 func (f *fakeOrka) DeleteEmulator(ctx context.Context, names ...string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deletedEmulators = append(f.deletedEmulators, names...)
@@ -78,6 +83,10 @@ func (f *fakeOrka) ListEmulators(ctx context.Context) ([]*orka.OrkaEmulatorRespo
 	f.listEmulatorCalls++
 	list := f.listEmulatorsFunc
 	f.mu.Unlock()
+
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
 
 	if list != nil {
 		return list(ctx)
@@ -325,6 +334,11 @@ var _ = Describe("Provisioning with emulators", func() {
 			<-ctx.Done()
 			return nil, fmt.Errorf("command was interrupted: %w", ctx.Err())
 		}
+		// The interrupted deploy leaves its record behind, and cleanup must still find and delete it
+		// although the attempt's context is done.
+		fake.listEmulatorsFunc = func(ctx context.Context) ([]*orka.OrkaEmulatorResponseModel, error) {
+			return []*orka.OrkaEmulatorResponseModel{runningEmulator("foo-abcde-emu-1", vmName, 15555)}, nil
+		}
 		go func() {
 			<-started
 			cancel()
@@ -332,6 +346,7 @@ var _ = Describe("Provisioning with emulators", func() {
 
 		_, _, err := p.ProvisionRunner(attemptCtx)
 		Expect(errors.Is(err, context.Canceled)).To(BeTrue())
+		Expect(fake.sortedDeletedEmulators()).To(Equal([]string{"foo-abcde-emu-1"}))
 		Expect(fake.deletedVMs).To(Equal([]string{vmName}))
 	})
 
