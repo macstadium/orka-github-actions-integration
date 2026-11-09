@@ -34,6 +34,9 @@ type Resolution struct {
 	// Dangling lists emulator configs whose VM config prefix matches no VM config in the cluster,
 	// which is almost always a typo in the emulator config name.
 	Dangling []string
+	// Malformed lists emulator configs whose names contain Token but do not follow the convention,
+	// such as foo-emulator1 or foo-emulators. They are almost always a misspelled attempt at it.
+	Malformed []string
 	// Unserved lists emulator configs whose VM config exists but is served by some other runner.
 	// Emulator configs are cluster-wide, so on a cluster running several runners this is normal.
 	Unserved []string
@@ -103,6 +106,9 @@ func ResolvePairings(served, clusterVMConfigs, emulatorConfigs []string) Resolut
 
 		vmConfig, suffix, ok := ParseConfigName(name)
 		if !ok {
+			if strings.Contains(name, Token) {
+				resolution.Malformed = append(resolution.Malformed, name)
+			}
 			continue
 		}
 
@@ -123,6 +129,7 @@ func ResolvePairings(served, clusterVMConfigs, emulatorConfigs []string) Resolut
 	}
 
 	sort.Strings(resolution.Dangling)
+	sort.Strings(resolution.Malformed)
 	sort.Strings(resolution.Unserved)
 	sort.Strings(resolution.Skipped)
 

@@ -16,7 +16,8 @@ type ConfigLister interface {
 	ListVMConfigs(ctx context.Context) ([]*orka.OrkaVMConfigResponseModel, error)
 }
 
-// DanglingRecorder receives the dangling config count after each successful pass.
+// DanglingRecorder receives the count of emulator configs that will never be deployed, dangling or
+// misnamed, after each successful pass.
 type DanglingRecorder interface {
 	SetEmulatorDanglingConfigs(count int)
 }
@@ -43,6 +44,7 @@ type Resolver struct {
 	lastVMConfigError string
 	lastPairings      string
 	lastDangling      string
+	lastMalformed     string
 	lastUnserved      string
 	lastSkipped       string
 }
@@ -137,8 +139,10 @@ func (r *Resolver) Refresh(ctx context.Context) error {
 
 	r.logChanges(resolution)
 
-	if r.recorder != nil && clusterKnown {
-		r.recorder.SetEmulatorDanglingConfigs(len(resolution.Dangling))
+	// Misnamed configs are known without the VM config list, so they are counted even when dangling
+	// ones cannot be told apart from other runners' configs.
+	if r.recorder != nil && (clusterKnown || len(resolution.Malformed) > 0) {
+		r.recorder.SetEmulatorDanglingConfigs(len(resolution.Dangling) + len(resolution.Malformed))
 	}
 
 	return nil
@@ -170,6 +174,15 @@ func (r *Resolver) logChanges(resolution Resolution) {
 			r.logger.Warnf("emulator config(s) match no VM config in the cluster and will never be deployed, check the names: %s. An emulator config pairs with VM config <name> when it is named <name>%s or <name>%s-<suffix>", dangling, Token, Token)
 		} else {
 			r.logger.Infof("no dangling emulator configs remain")
+		}
+	}
+
+	if malformed := strings.Join(resolution.Malformed, ", "); malformed != r.lastMalformed {
+		r.lastMalformed = malformed
+		if malformed != "" {
+			r.logger.Warnf("emulator config(s) contain %q but do not follow the naming convention and will never be deployed, check the names: %s. An emulator config pairs with VM config <name> when it is named <name>%s or <name>%s-<suffix>", Token, malformed, Token, Token)
+		} else {
+			r.logger.Infof("no misnamed emulator configs remain")
 		}
 	}
 

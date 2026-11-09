@@ -104,7 +104,7 @@ func New(runnerName string) *Metrics {
 
 		emulatorDanglingConfigs: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "emulator_dangling_configs",
-			Help: "Android emulator configs whose name matches no VM config in the cluster",
+			Help: "Android emulator configs that will never be deployed, because their name does not follow the naming convention or matches no VM config in the cluster",
 		}, []string{"runner_name"}),
 
 		emulatorCapacityBreaker: prometheus.NewGaugeVec(prometheus.GaugeOpts{

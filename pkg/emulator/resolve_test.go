@@ -114,11 +114,19 @@ var _ = Describe("ResolvePairings", func() {
 		Expect(configsOf(resolution, "foo")).To(Equal([]string{"foo-emulator"}))
 	})
 
-	It("ignores configs that do not follow the convention", func() {
-		resolution := ResolvePairings([]string{"foo"}, []string{"foo"}, []string{"pixel8-api36", "foo-emulators"})
+	It("ignores configs without the token", func() {
+		resolution := ResolvePairings([]string{"foo"}, []string{"foo"}, []string{"pixel8-api36", "foo-emu"})
 		Expect(resolution.Pairings).To(BeEmpty())
 		Expect(resolution.Dangling).To(BeEmpty())
+		Expect(resolution.Malformed).To(BeEmpty())
 		Expect(resolution.Unserved).To(BeEmpty())
+	})
+
+	It("reports configs with the token that do not follow the convention as malformed", func() {
+		resolution := ResolvePairings([]string{"foo"}, []string{"foo"}, []string{"foo-emulators", "foo-emulator1", "foo-emulator-", "foo-emulator-tablet"})
+		Expect(configsOf(resolution, "foo")).To(Equal([]string{"foo-emulator-tablet"}))
+		Expect(resolution.Malformed).To(Equal([]string{"foo-emulator-", "foo-emulator1", "foo-emulators"}))
+		Expect(resolution.Dangling).To(BeEmpty())
 	})
 
 	It("produces no pairings when there are no emulator configs", func() {
@@ -296,6 +304,27 @@ var _ = Describe("Resolver", func() {
 		Expect(warnings()).To(HaveLen(1))
 		Expect(warnings()[0]).To(ContainSubstring("unable to list VM configs"))
 		Expect(recorder.calls).To(BeEmpty())
+	})
+
+	It("warns about misnamed configs once and counts them with the dangling ones", func() {
+		lister.configs = []string{"foo-emulator1", "fo-emulator"}
+		Expect(resolver.Refresh(ctx)).To(Succeed())
+		Expect(resolver.Refresh(ctx)).To(Succeed())
+
+		Expect(warnings()).To(ConsistOf(
+			ContainSubstring("match no VM config"),
+			And(ContainSubstring("do not follow the naming convention"), ContainSubstring("foo-emulator1")),
+		))
+		Expect(recorder.calls).To(Equal([]int{2, 2}))
+	})
+
+	It("counts misnamed configs when the VM config list has never succeeded", func() {
+		lister.configs = []string{"bar-emulator", "foo-emulators"}
+		lister.vmConfigsErr = errors.New("forbidden")
+		Expect(resolver.Refresh(ctx)).To(Succeed())
+
+		Expect(warnings()).To(ContainElement(ContainSubstring("foo-emulators")))
+		Expect(recorder.calls).To(Equal([]int{1}))
 	})
 
 	It("reuses the last VM config list when a later one fails", func() {

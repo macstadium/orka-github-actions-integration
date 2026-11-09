@@ -128,7 +128,7 @@ The naming rule is exact:
 
 * `ios-build-emulator` and `ios-build-emulator-<suffix>` pair with VM config `ios-build`, and with no other. In particular they never pair with `ios`, whose configs would be named `ios-emulator` and `ios-emulator-<suffix>`.
 * A VM config whose own name contains `-emulator` never gets emulators, since its configs would be ambiguous. The runner logs a warning if it serves one.
-* An emulator config whose prefix matches no VM config in the cluster is logged as a warning and counted in the `emulator_dangling_configs` metric, since it is almost always a typo. Configs that pair with a VM config served by another runner are not reported.
+* An emulator config whose prefix matches no VM config in the cluster is logged as a warning and counted in the `emulator_dangling_configs` metric, since it is almost always a typo. So is a config whose name contains `-emulator` but does not follow the convention, such as `ios-build-emulator1` or `ios-build-emulators`. Configs that pair with a VM config served by another runner are not reported.
 
 If the cluster cannot list emulator configs, for example because it predates Android emulator support, the runner logs one warning and runs without emulators. Once a list has succeeded, a later failed refresh keeps the last known pairings rather than dropping them.
 
@@ -190,7 +190,7 @@ With `ENABLE_METRICS=true`, these series are exported alongside the scale set st
 | `emulator_deploy_total{result}` | Emulator deploys by result: `success`, `capacity` (the node had no room), or `error` |
 | `emulator_deploy_duration_seconds` | Time taken by each emulator deploy |
 | `emulator_orphans_reaped_total` | Emulators deleted at startup because their paired VM no longer exists |
-| `emulator_dangling_configs` | Emulator configs whose name matches no VM config in the cluster |
+| `emulator_dangling_configs` | Emulator configs that will never be deployed, because their name does not follow the naming convention or matches no VM config in the cluster |
 | `emulator_capacity_breaker_open` | 1 while only one job at a time is provisioned because attempts keep failing for lack of emulator capacity |
 | `runner_provision_exhausted_total` | Rounds of 5 provisioning attempts that all failed before GitHub reissued the job |
 
