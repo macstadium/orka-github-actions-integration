@@ -43,10 +43,11 @@ func (p *RunnerProvisioner) emulatorRefs() []emulator.EmulatorRef {
 }
 
 // deployEmulators brings up every emulator paired with the VM's config, concurrently, and fails if
-// any one of them fails: a job written against N emulators cannot run against fewer. The caller
-// cleans up whatever did come up. Concurrency is safe because the operator's port allocator holds a
-// pending reservation for each console port until the pod is listable; deploying in sequence would
-// instead cost N times the deploy latency.
+// any one of them fails: a job written against N emulators cannot run against fewer. The first
+// failure stops the deploys still running, so a slow one, such as a cold system image pull, does not
+// hold the VM until the deploy timeout. The caller cleans up whatever did come up. Concurrency is
+// safe because the operator's port allocator holds a pending reservation for each console port until
+// the pod is listable; deploying in sequence would instead cost N times the deploy latency.
 func (p *RunnerProvisioner) deployEmulators(ctx context.Context, vmName, node string) ([]provisionedEmulator, error) {
 	refs := p.emulatorRefs()
 	if len(refs) == 0 {
@@ -60,22 +61,41 @@ func (p *RunnerProvisioner) deployEmulators(ctx context.Context, vmName, node st
 
 	p.logger.Infof("deploying %d Android emulator(s) for VM %s: %s", len(refs), vmName, strings.Join(configs, ", "))
 
+	burstCtx, stopBurst := context.WithCancel(ctx)
+	defer stopBurst()
+
 	var wg sync.WaitGroup
 	provisioned := make([]provisionedEmulator, len(refs))
 	failures := make([]error, len(refs))
+	stopped := make([]bool, len(refs))
 
 	for i, ref := range refs {
 		wg.Add(1)
 
 		go func(index int, ref emulator.EmulatorRef) {
 			defer wg.Done()
-			failures[index] = p.deployEmulator(ctx, vmName, emulatorName(vmName, index), ref, &provisioned[index])
+
+			err := p.deployEmulator(burstCtx, vmName, emulatorName(vmName, index), ref, &provisioned[index])
+			if err == nil {
+				return
+			}
+
+			// A deploy stopped because a sibling failed is not a failure of its own. Reporting it as
+			// one would quote the cancellation in place of the real cause and make the burst look
+			// cancelled to errors.Is. A cancel from ctx itself is still reported, since it is real.
+			if errors.Is(err, context.Canceled) && ctx.Err() == nil {
+				stopped[index] = true
+				return
+			}
+
+			failures[index] = err
+			stopBurst()
 		}(i, ref)
 	}
 
 	wg.Wait()
 
-	if err := newEmulatorDeployError(vmName, node, len(refs), failures); err != nil {
+	if err := newEmulatorDeployError(vmName, node, len(refs), failures, stopped); err != nil {
 		for _, failure := range err.failures {
 			p.logger.Debugf("emulator deploy failed for VM %s: %v", vmName, failure)
 		}
@@ -95,8 +115,10 @@ func (p *RunnerProvisioner) deployEmulator(ctx context.Context, vmName, name str
 
 	deployed, err := p.orkaClient.DeployEmulator(ctx, name, vmName, ref.Config)
 	if err != nil {
-		// A cancelled deploy says nothing about the cluster, so it is not counted either way.
-		if ctx.Err() != nil {
+		// A cancelled deploy says nothing about the cluster, so it is not counted either way. The
+		// error decides it rather than ctx alone, so a failure that lands just as a sibling stops the
+		// burst is still classified.
+		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
 			return fmt.Errorf("emulator %s (%s): %w", name, ref.Config, err)
 		}
 
@@ -133,11 +155,13 @@ type emulatorDeployError struct {
 	node     string
 	total    int
 	failures []error
+	// stopped counts deploys cut short by another deploy's failure.
+	stopped int
 }
 
 // newEmulatorDeployError collects the non-nil failures from a burst of total deploys, or returns nil
 // if every deploy succeeded.
-func newEmulatorDeployError(vmName, node string, total int, results []error) *emulatorDeployError {
+func newEmulatorDeployError(vmName, node string, total int, results []error, stopped []bool) *emulatorDeployError {
 	var failures []error
 	for _, err := range results {
 		if err != nil {
@@ -149,7 +173,14 @@ func newEmulatorDeployError(vmName, node string, total int, results []error) *em
 		return nil
 	}
 
-	return &emulatorDeployError{vmName: vmName, node: node, total: total, failures: failures}
+	stoppedCount := 0
+	for _, s := range stopped {
+		if s {
+			stoppedCount++
+		}
+	}
+
+	return &emulatorDeployError{vmName: vmName, node: node, total: total, failures: failures, stopped: stoppedCount}
 }
 
 // Error summarizes the burst and quotes one failure in full, preferring one that is not a capacity
@@ -179,6 +210,9 @@ func (e *emulatorDeployError) Error() string {
 	}
 	if other := len(e.failures) - capacity; other > 0 {
 		counts = append(counts, fmt.Sprintf("%d failed for other reasons", other))
+	}
+	if e.stopped > 0 {
+		counts = append(counts, fmt.Sprintf("%d still deploying were stopped", e.stopped))
 	}
 
 	return fmt.Sprintf("%d of %d emulator(s) paired with VM %s failed to deploy on node %s (%s): %v",

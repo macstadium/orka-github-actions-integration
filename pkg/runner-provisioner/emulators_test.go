@@ -336,6 +336,35 @@ var _ = Describe("Provisioning with emulators", func() {
 		Expect(errors.Is(err, ErrEmulatorCapacity)).To(BeTrue())
 	})
 
+	It("stops the deploys still running once one fails, and reports the failure that stopped them", func() {
+		source.refs[vmConfig] = []emulator.EmulatorRef{
+			{Config: "foo-emulator-a", Suffix: "a"},
+			{Config: "foo-emulator-b", Suffix: "b"},
+			{Config: "foo-emulator-c", Suffix: "c"},
+		}
+		fake.deployEmulatorFunc = func(ctx context.Context, name, vm, config string) (*orka.OrkaEmulatorResponseModel, error) {
+			if config == "foo-emulator-a" {
+				return nil, errors.New("0/3 nodes are available: 1 Insufficient orka.macstadium.com/emulator")
+			}
+			// A cold system image pull, which would run far past the test if it were not stopped.
+			select {
+			case <-ctx.Done():
+				return nil, fmt.Errorf("command was interrupted: %w", ctx.Err())
+			case <-time.After(10 * time.Second):
+				return nil, errors.New("slow deploy was not stopped")
+			}
+		}
+
+		start := time.Now()
+		_, _, err := p.ProvisionRunner(ctx)
+
+		Expect(time.Since(start)).To(BeNumerically("<", 5*time.Second))
+		Expect(err).To(MatchError("1 of 3 emulator(s) paired with VM foo-abcde failed to deploy on node mini-arm-36 (1 had no room on the node, 2 still deploying were stopped): emulator foo-abcde-emu-1 (foo-emulator-a): insufficient Android emulator capacity: 0/3 nodes are available: 1 Insufficient orka.macstadium.com/emulator"))
+		Expect(errors.Is(err, ErrEmulatorCapacity)).To(BeTrue())
+		Expect(errors.Is(err, context.Canceled)).To(BeFalse())
+		Expect(fake.deletedVMs).To(Equal([]string{vmName}))
+	})
+
 	It("kills an in-flight deploy when the context is cancelled and still cleans up", func() {
 		source.refs[vmConfig] = []emulator.EmulatorRef{{Config: "foo-emulator"}}
 		attemptCtx, cancel := context.WithCancel(ctx)
