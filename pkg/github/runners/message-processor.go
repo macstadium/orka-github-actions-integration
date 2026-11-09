@@ -128,7 +128,25 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 
 	p.logger.Infof("process batched runner scale set job messages with id %d and batch size %d", message.MessageId, len(batchedMessages))
 
-	inflight := int(p.provisioningInflight.Load())
+	// GitHub reissues a job that no runner picked up by canceling it and assigning it again under a
+	// new job ID, in the same batch. Apply the cancellations first, so the canceled job no longer
+	// counts as in flight when the batch's assignments are weighed, and its reissue is not skipped.
+	messageTypes := make([]string, len(batchedMessages))
+	for i, message := range batchedMessages {
+		var messageType types.JobMessageType
+		if err := json.Unmarshal(message, &messageType); err != nil {
+			return fmt.Errorf("could not decode job message type. %w", err)
+		}
+		messageTypes[i] = messageType.MessageType
+
+		if messageType.MessageType == "JobCompleted" {
+			if err := p.processJobCompleted(message); err != nil {
+				return err
+			}
+		}
+	}
+
+	inflight := p.provisioningInflight()
 	requiredRunners := message.Statistics.TotalAssignedJobs - message.Statistics.TotalRegisteredRunners - inflight
 	provisionedRunners := 0
 
@@ -152,13 +170,8 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 	}
 
 	var availableJobs []int64
-	for _, message := range batchedMessages {
-		var messageType types.JobMessageType
-		if err := json.Unmarshal(message, &messageType); err != nil {
-			return fmt.Errorf("could not decode job message type. %w", err)
-		}
-
-		switch messageType.MessageType {
+	for i, message := range batchedMessages {
+		switch messageTypes[i] {
 		case "JobAvailable":
 			var jobAvailable types.JobAvailable
 			if err := json.Unmarshal(message, &jobAvailable); err != nil {
@@ -186,33 +199,39 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 			}
 			p.logger.Infof("Job started message received for JobId: %s, RunnerRequestId: %d, RunnerId: %d, RunnerName: %s", jobStarted.JobId, jobStarted.RunnerRequestId, jobStarted.RunnerId, jobStarted.RunnerName)
 		case "JobCompleted":
-			var jobCompleted types.JobCompleted
-			if err := json.Unmarshal(message, &jobCompleted); err != nil {
-				return fmt.Errorf("could not decode job completed message. %w", err)
-			}
-
-			p.logger.Infof("Job completed message received for JobId: %s, RunnerRequestId: %d, RunnerId: %d, RunnerName: %s, with Result: %s", jobCompleted.JobId, jobCompleted.RunnerRequestId, jobCompleted.RunnerId, jobCompleted.RunnerName, jobCompleted.Result)
-
-			runnerName := jobCompleted.RunnerName
-			if runnerName != "" {
-				p.cancelRunnerContext(runnerName, "Job completed webhook received")
-			} else {
-				p.logger.Warnf("Job completed message received for JobId: %s, RunnerRequestId: %d, RunnerId: %d, but RunnerName is empty. Skipping cleanup.", jobCompleted.JobId, jobCompleted.RunnerRequestId, jobCompleted.RunnerId)
-			}
-
-			if (jobCompleted.JobId != "" || jobCompleted.RunnerRequestId != 0) && (jobCompleted.Result == cancelledStatus || jobCompleted.Result == ignoredStatus || jobCompleted.Result == abandonedStatus) {
-				jobIdentity := jobIdentity{jobId: jobCompleted.JobId, runnerRequestId: jobCompleted.RunnerRequestId}
-				p.logger.Infof("setting upstream canceled job for %s", jobIdentity)
-				p.setUpstreamCanceledJob(jobIdentity)
-			}
+			// Processed ahead of the rest of the batch.
 		default:
-			p.logger.Infof("unknown job message type %s", messageType.MessageType)
+			p.logger.Infof("unknown job message type %s", messageTypes[i])
 		}
 	}
 
 	err := p.runnerManager.AcquireJobs(p.ctx, availableJobs)
 	if err != nil {
 		return fmt.Errorf("could not acquire jobs. %w", err)
+	}
+
+	return nil
+}
+
+func (p *RunnerMessageProcessor) processJobCompleted(message json.RawMessage) error {
+	var jobCompleted types.JobCompleted
+	if err := json.Unmarshal(message, &jobCompleted); err != nil {
+		return fmt.Errorf("could not decode job completed message. %w", err)
+	}
+
+	p.logger.Infof("Job completed message received for JobId: %s, RunnerRequestId: %d, RunnerId: %d, RunnerName: %s, with Result: %s", jobCompleted.JobId, jobCompleted.RunnerRequestId, jobCompleted.RunnerId, jobCompleted.RunnerName, jobCompleted.Result)
+
+	runnerName := jobCompleted.RunnerName
+	if runnerName != "" {
+		p.cancelRunnerContext(runnerName, "Job completed webhook received")
+	} else {
+		p.logger.Warnf("Job completed message received for JobId: %s, RunnerRequestId: %d, RunnerId: %d, but RunnerName is empty. Skipping cleanup.", jobCompleted.JobId, jobCompleted.RunnerRequestId, jobCompleted.RunnerId)
+	}
+
+	if (jobCompleted.JobId != "" || jobCompleted.RunnerRequestId != 0) && (jobCompleted.Result == cancelledStatus || jobCompleted.Result == ignoredStatus || jobCompleted.Result == abandonedStatus) {
+		jobIdentity := jobIdentity{jobId: jobCompleted.JobId, runnerRequestId: jobCompleted.RunnerRequestId}
+		p.logger.Infof("setting upstream canceled job for %s", jobIdentity)
+		p.setUpstreamCanceledJob(jobIdentity)
 	}
 
 	return nil
@@ -232,13 +251,11 @@ func (p *RunnerMessageProcessor) AdoptVM(vmName string) {
 }
 
 func (p *RunnerMessageProcessor) startRunner(job jobIdentity) {
-	p.provisioningInflight.Add(1)
 	var executionErr error
 
 	defer p.removeUpstreamCanceledJob(job)
 
 	executor, commands, provisioningErr := p.provisionRunnerWithRetry(p.ctx, job)
-	p.provisioningInflight.Add(-1)
 	if provisioningErr != nil {
 		if errors.Is(provisioningErr, context.Canceled) {
 			p.logger.Infof("provisioning canceled for %s", p.runnerScaleSetName)
@@ -386,6 +403,22 @@ func (p *RunnerMessageProcessor) beginProvisioning(ctx context.Context, job jobI
 	p.provisionCancels[job] = cancel
 
 	return jobCtx, true
+}
+
+// provisioningInflight counts the jobs being provisioned, leaving out jobs canceled upstream. Those are
+// only cleaning up, and counting them would let a canceled job take the slot of its own reissue.
+func (p *RunnerMessageProcessor) provisioningInflight() int {
+	p.upstreamCanceledJobsMutex.RLock()
+	defer p.upstreamCanceledJobsMutex.RUnlock()
+
+	inflight := 0
+	for job := range p.provisionCancels {
+		if !p.upstreamCanceledJobs[job] {
+			inflight++
+		}
+	}
+
+	return inflight
 }
 
 func (p *RunnerMessageProcessor) endProvisioning(job jobIdentity) {

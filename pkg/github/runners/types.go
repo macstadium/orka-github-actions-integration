@@ -7,7 +7,6 @@ package runners
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 
 	backoff "github.com/cenkalti/backoff/v4"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/actions"
@@ -57,14 +56,14 @@ type RunnerMessageProcessor struct {
 	runnerScaleSetName string
 
 	// upstreamCanceledJobsMutex guards both maps below, so marking a job canceled and cancelling
-	// its in-flight provisioning happen together.
+	// its in-flight provisioning happen together. provisionCancels holds an entry for every job
+	// being provisioned, which provisioningInflight counts.
 	upstreamCanceledJobs      map[jobIdentity]bool
 	provisionCancels          map[jobIdentity]context.CancelFunc
 	upstreamCanceledJobsMutex sync.RWMutex
 
 	runnerContextCancels      map[string]context.CancelFunc
 	runnerContextCancelsMutex sync.Mutex
-	provisioningInflight      atomic.Int32
 
 	// newProvisionBackoff produces the wait between provisioning attempts. Tests shorten it.
 	newProvisionBackoff func() backoff.BackOff

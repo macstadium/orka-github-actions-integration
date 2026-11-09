@@ -2,6 +2,7 @@ package runners
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync/atomic"
 	"time"
@@ -41,6 +42,33 @@ func (b *signalingBackOff) NextBackOff() time.Duration {
 }
 
 func (b *signalingBackOff) Reset() {}
+
+type fakeRunnerManager struct{}
+
+func (fakeRunnerManager) ProcessMessages(ctx context.Context, handler func(msg *types.RunnerScaleSetMessage) error) error {
+	return nil
+}
+
+func (fakeRunnerManager) AcquireJobs(ctx context.Context, requestIds []int64) error {
+	return nil
+}
+
+// jobBatch builds a job message batch as GitHub delivers it, with the given assigned job count.
+func jobBatch(assigned int, messages ...any) *types.RunnerScaleSetMessage {
+	body, err := json.Marshal(messages)
+	Expect(err).ToNot(HaveOccurred())
+
+	return &types.RunnerScaleSetMessage{
+		MessageId:   7,
+		MessageType: runnerScaleSetJobMessagesType,
+		Body:        string(body),
+		Statistics:  &types.RunnerScaleSetStatistic{TotalAssignedJobs: assigned},
+	}
+}
+
+func jobBase(messageType, jobId string, runnerRequestId int64) types.JobMessageBase {
+	return types.JobMessageBase{JobMessageType: types.JobMessageType{MessageType: messageType}, JobId: jobId, RunnerRequestId: runnerRequestId}
+}
 
 type countingRecorder struct {
 	exhausted atomic.Int32
@@ -173,7 +201,7 @@ var _ = Describe("Provisioning retries", func() {
 
 		processor.startRunner(job)
 
-		Expect(processor.provisioningInflight.Load()).To(Equal(int32(0)))
+		Expect(processor.provisioningInflight()).To(Equal(0))
 		Expect(processor.provisionCancels).To(BeEmpty())
 		Expect(processor.upstreamCanceledJobs).To(BeEmpty())
 	})
@@ -186,5 +214,54 @@ var _ = Describe("Provisioning retries", func() {
 		}
 
 		Expect(func() { _, _, _ = processor.provisionRunnerWithRetry(context.Background(), job) }).ToNot(Panic())
+	})
+})
+
+var _ = Describe("Scaling for assigned jobs", func() {
+	var (
+		provisioner *fakeProvisioner
+		processor   *RunnerMessageProcessor
+		started     chan int
+	)
+
+	BeforeEach(func() {
+		logging.SetupLogger("info")
+		ctx, cancel := context.WithCancel(context.Background())
+		DeferCleanup(cancel)
+
+		started = make(chan int, 4)
+		provisioner = &fakeProvisioner{
+			provision: func(ctx context.Context, attempt int) (*orka.VMCommandExecutor, []string, error) {
+				started <- attempt
+				<-ctx.Done()
+				return nil, nil, ctx.Err()
+			},
+		}
+		processor = NewRunnerMessageProcessor(ctx, fakeRunnerManager{}, provisioner, nil, &types.RunnerScaleSet{Id: 1, Name: "foo"}, nil)
+		processor.newProvisionBackoff = func() backoff.BackOff { return &backoff.ZeroBackOff{} }
+	})
+
+	It("provisions a reissued job that arrives in the same batch as its original's cancellation", func() {
+		go processor.startRunner(newJobIdentity("job-1", 42))
+		Eventually(started).Should(Receive(Equal(1)))
+		Expect(processor.provisioningInflight()).To(Equal(1))
+
+		Expect(processor.processRunnerMessage(jobBatch(1,
+			types.JobCompleted{Result: cancelledStatus, JobMessageBase: jobBase("JobCompleted", "job-1", 42)},
+			types.JobAssigned{JobMessageBase: jobBase("JobAssigned", "job-2", 43)},
+		))).To(Succeed())
+
+		Eventually(started).Should(Receive(Equal(2)))
+	})
+
+	It("still counts a job in flight that was not canceled", func() {
+		go processor.startRunner(newJobIdentity("job-1", 42))
+		Eventually(started).Should(Receive(Equal(1)))
+
+		Expect(processor.processRunnerMessage(jobBatch(1,
+			types.JobAssigned{JobMessageBase: jobBase("JobAssigned", "job-1", 42)},
+		))).To(Succeed())
+
+		Consistently(started, 200*time.Millisecond).ShouldNot(Receive())
 	})
 })
