@@ -323,6 +323,11 @@ func (p *RunnerMessageProcessor) startRunner(job jobIdentity) {
 // starts a new round of attempts. Because the backoff alone waits nearly 4 minutes, that reissue
 // usually cancels a round before its last attempt, so the cap mostly ends rounds whose attempts fail
 // fast. The error log and the exhausted metric record the rounds that do run out.
+//
+// GitHub does not document the reissue. It was observed on an Orka 4.0 lab cluster against
+// github.com in November 2026, where the cancellation and the new assignment arrived in one message
+// batch. Because each reissue starts a fresh round, the cap alone does not stop an emulator pairing
+// that never fits from churning VMs; capacityBreaker bounds that across jobs.
 func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, job jobIdentity) (*orka.VMCommandExecutor, []string, error) {
 	jobCtx, ok := p.beginProvisioning(ctx, job)
 	if !ok {
