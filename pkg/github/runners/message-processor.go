@@ -45,8 +45,9 @@ func (k jobIdentity) String() string {
 	return fmt.Sprintf("jobId=%s runnerRequestId=%d", k.jobId, k.runnerRequestId)
 }
 
-// defaultProvisionBackoff waits 15s, 30s, 60s, then 120s (with jitter) between attempts, and 120s
-// from then on, so a transient failure clears quickly while a node that stays full is not hammered.
+// defaultProvisionBackoff waits 15s, 30s, 60s, then 120s between attempts, and 120s from then on,
+// so a transient failure clears quickly while a node that stays full is not hammered. Each wait is
+// randomized by up to half either way, so jobs that fail together do not retry together.
 func defaultProvisionBackoff() backoff.BackOff {
 	b := backoff.NewExponentialBackOff()
 	b.InitialInterval = 15 * time.Second
@@ -317,8 +318,8 @@ func (p *RunnerMessageProcessor) startRunner(job jobIdentity) {
 // reissues a job that no runner picks up within about 5 minutes, by canceling it and assigning it
 // again under a new job ID, but it does not document that, and it does not keep doing it. On an
 // Orka 4.0 lab cluster against github.com in November 2026, each job was reissued twice and then
-// left assigned with no further messages. To keep retrying affordable, the waits level off at two
-// minutes, and capacityBreaker keeps an emulator pairing that never fits from churning a VM for
+// left assigned with no further messages. To keep retrying affordable, the waits level off at about
+// two minutes, and capacityBreaker keeps an emulator pairing that never fits from churning a VM for
 // every queued job.
 func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, job jobIdentity) (*orka.VMCommandExecutor, []string, error) {
 	jobCtx, ok := p.beginProvisioning(ctx, job)
