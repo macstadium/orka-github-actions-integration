@@ -5,6 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/macstadium/orka-github-actions-integration/pkg/github/actions"
+	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
 	"github.com/macstadium/orka-github-actions-integration/pkg/orka"
 	. "github.com/onsi/ginkgo/v2"
@@ -17,12 +19,22 @@ func TestReconciler(t *testing.T) {
 }
 
 type sweepOrka struct {
-	emulators    []*orka.OrkaEmulatorResponseModel
-	emulatorsErr error
-	vms          []*orka.OrkaVMInfo
-	deleteErrs   map[string]error
-	deleted      []string
-	listVMCalls  int
+	emulators       []*orka.OrkaEmulatorResponseModel
+	emulatorsErr    error
+	vms             []*orka.OrkaVMInfo
+	deleteErrs      map[string]error
+	deleted         []string
+	listVMCalls     int
+	onListEmulators func()
+}
+
+// unreachableGitHub fails every runner lookup, so reconciliation adopts each VM without an SSH check.
+type unreachableGitHub struct {
+	actions.ActionsService
+}
+
+func (unreachableGitHub) GetRunner(ctx context.Context, runnerName string) (*types.RunnerReference, error) {
+	return nil, errors.New("GitHub is unreachable")
 }
 
 type orphanCount struct {
@@ -49,6 +61,9 @@ func (s *sweepOrka) DeleteEmulator(ctx context.Context, name string) error {
 	return s.deleteErrs[name]
 }
 func (s *sweepOrka) ListEmulators(ctx context.Context) ([]*orka.OrkaEmulatorResponseModel, error) {
+	if s.onListEmulators != nil {
+		s.onListEmulators()
+	}
 	return s.emulators, s.emulatorsErr
 }
 func (s *sweepOrka) ListEmulatorConfigs(ctx context.Context) ([]*orka.OrkaEmulatorConfigResponseModel, error) {
@@ -125,5 +140,16 @@ var _ = Describe("Emulator orphan sweep", func() {
 	It("does not list VMs when there are no emulators at all", func() {
 		r.ReconcileVMs(context.Background(), nil, "foo")
 		Expect(fake.listVMCalls).To(Equal(0))
+	})
+
+	It("adopts existing VMs before sweeping, so a job completion right after startup is not lost", func() {
+		var events []string
+		fake.onListEmulators = func() { events = append(events, "sweep") }
+		r.actionsClient = unreachableGitHub{}
+		r.adopt = func(vmName string) { events = append(events, "adopt "+vmName) }
+
+		r.ReconcileVMs(context.Background(), []*orka.OrkaVMInfo{{Name: "foo-abcde"}, {Name: "foo-fghij"}}, "foo")
+
+		Expect(events).To(Equal([]string{"adopt foo-abcde", "adopt foo-fghij", "sweep"}))
 	})
 })

@@ -60,22 +60,25 @@ func NewVMReconciler(actionsClient actions.ActionsService, orkaClient orka.OrkaS
 // VMs must be captured before message processing starts to avoid reconciling
 // VMs provisioned by the current process.
 func (r *VMReconciler) ReconcileVMs(ctx context.Context, vms []*orka.OrkaVMInfo, scaleSetName string) {
+	if len(vms) > 0 {
+		r.logger.Infof("reconciliation: found %d existing VM(s) to reconcile", len(vms))
+
+		for _, vm := range vms {
+			r.reconcileVM(ctx, vm)
+		}
+
+		r.logger.Infof("reconciliation: completed")
+	}
+
+	// Runs after adoption, because message processing has already started: a job completion for an
+	// active VM that arrives before the VM is adopted finds no runner context to cancel, and the VM
+	// stays up until the VM tracker deletes it.
+	//
 	// Runs even with no VMs to reconcile: an emulator can outlive every VM in the scale set, which
 	// is exactly the state this sweep exists to clear. It also runs whether or not any emulator
 	// config pairs with this runner today, since one may have been removed while its emulators
 	// were still up.
 	r.sweepOrphanedEmulators(ctx, scaleSetName)
-
-	if len(vms) == 0 {
-		return
-	}
-	r.logger.Infof("reconciliation: found %d existing VM(s) to reconcile", len(vms))
-
-	for _, vm := range vms {
-		r.reconcileVM(ctx, vm)
-	}
-
-	r.logger.Infof("reconciliation: completed")
 }
 
 // sweepOrphanedEmulators deletes emulators whose paired VM belonged to this scale set but no longer
@@ -83,9 +86,8 @@ func (r *VMReconciler) ReconcileVMs(ctx context.Context, vms []*orka.OrkaVMInfo,
 // only the gap that leaves behind: on a deploy timeout the CLI abandons the emulator record rather
 // than removing it, and the process may have exited before cleanup ran.
 //
-// This runs before VM reconciliation deliberately. VMs that reconciliation is about to delete still
-// exist at this point, so their emulators are not treated as orphans and are cleaned up by the
-// owner-reference cascade instead.
+// VM reconciliation deletes VMs in the background, so one may disappear while this runs. Its
+// emulators are then deleted here rather than by the owner-reference cascade, which is harmless.
 //
 // On a cluster that predates emulators the list fails, so this logs one warning per startup and
 // moves on; it never blocks VM reconciliation.
