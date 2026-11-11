@@ -34,12 +34,11 @@ type Metrics struct {
 	totalBusyRunners       *prometheus.GaugeVec
 	totalIdleRunners       *prometheus.GaugeVec
 
-	emulatorDeploys          *prometheus.CounterVec
-	emulatorDeployDuration   *prometheus.HistogramVec
-	emulatorOrphansReaped    *prometheus.CounterVec
-	emulatorDanglingConfigs  *prometheus.GaugeVec
-	emulatorCapacityBreaker  *prometheus.GaugeVec
-	runnerProvisionExhausted *prometheus.CounterVec
+	emulatorDeploys         *prometheus.CounterVec
+	emulatorDeployDuration  *prometheus.HistogramVec
+	emulatorOrphansReaped   *prometheus.CounterVec
+	emulatorDanglingConfigs *prometheus.GaugeVec
+	emulatorCapacityBreaker *prometheus.GaugeVec
 }
 
 // New builds the series without starting the HTTP server or the stats poller, which Start adds.
@@ -111,11 +110,6 @@ func New(runnerName string) *Metrics {
 			Name: "emulator_capacity_breaker_open",
 			Help: "1 while only one job at a time is provisioned because attempts keep failing for lack of Android emulator capacity",
 		}, []string{"runner_name"}),
-
-		runnerProvisionExhausted: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "runner_provision_exhausted_total",
-			Help: "Rounds of provisioning attempts for a job that all failed before GitHub reissued the job",
-		}, []string{"runner_name"}),
 	}
 
 	registry.MustRegister(
@@ -131,7 +125,6 @@ func New(runnerName string) *Metrics {
 		m.emulatorOrphansReaped,
 		m.emulatorDanglingConfigs,
 		m.emulatorCapacityBreaker,
-		m.runnerProvisionExhausted,
 	)
 
 	return m
@@ -177,15 +170,6 @@ func (m *Metrics) SetEmulatorCapacityBreakerOpen(open bool) {
 	}
 
 	m.emulatorCapacityBreaker.WithLabelValues(m.runnerName).Set(value)
-}
-
-// IncRunnerProvisionExhausted counts a job given up on after the provisioning retry limit.
-func (m *Metrics) IncRunnerProvisionExhausted() {
-	if m == nil {
-		return
-	}
-
-	m.runnerProvisionExhausted.WithLabelValues(m.runnerName).Inc()
 }
 
 func Start(

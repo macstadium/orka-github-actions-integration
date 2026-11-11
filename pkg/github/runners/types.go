@@ -41,7 +41,6 @@ type RunnerProvisionerInterface interface {
 // provisionRecorder is the slice of *metrics.Metrics the processor records into. A nil
 // *metrics.Metrics satisfies it and records nothing.
 type provisionRecorder interface {
-	IncRunnerProvisionExhausted()
 	SetEmulatorCapacityBreakerOpen(open bool)
 }
 
@@ -66,7 +65,8 @@ type RunnerMessageProcessor struct {
 	runnerContextCancels      map[string]context.CancelFunc
 	runnerContextCancelsMutex sync.Mutex
 
-	// newProvisionBackoff produces the wait between provisioning attempts. Tests shorten it.
+	// newProvisionBackoff produces the wait between provisioning attempts. Tests shorten it. It never
+	// returns backoff.Stop, because provisioning retries until the job is canceled upstream.
 	newProvisionBackoff func() backoff.BackOff
 
 	capacityBreaker capacityBreaker

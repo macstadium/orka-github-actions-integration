@@ -45,17 +45,14 @@ func (k jobIdentity) String() string {
 	return fmt.Sprintf("jobId=%s runnerRequestId=%d", k.jobId, k.runnerRequestId)
 }
 
-// maxProvisionAttempts bounds how many times a job's runner is provisioned before giving up.
-const maxProvisionAttempts = 5
-
-// defaultProvisionBackoff waits 15s, 30s, 60s, then 120s (with jitter) between attempts, so a
-// transient failure clears quickly while a node that stays full is not hammered.
+// defaultProvisionBackoff waits 15s, 30s, 60s, then 120s (with jitter) between attempts, and 120s
+// from then on, so a transient failure clears quickly while a node that stays full is not hammered.
 func defaultProvisionBackoff() backoff.BackOff {
 	b := backoff.NewExponentialBackOff()
 	b.InitialInterval = 15 * time.Second
 	b.Multiplier = 2
 	b.MaxInterval = 2 * time.Minute
-	// The attempt cap bounds the retries, not elapsed time.
+	// Provisioning retries until the job is canceled upstream, however long that takes.
 	b.MaxElapsedTime = 0
 	b.Reset()
 
@@ -259,8 +256,6 @@ func (p *RunnerMessageProcessor) startRunner(job jobIdentity) {
 	if provisioningErr != nil {
 		if errors.Is(provisioningErr, context.Canceled) {
 			p.logger.Infof("provisioning canceled for %s", p.runnerScaleSetName)
-		} else if errors.Is(provisioningErr, errProvisioningPaused) {
-			p.logger.Warnf("not provisioning a runner for %s and job %s: %v. GitHub reissues the job if no runner picks it up within about 5 minutes.", p.runnerScaleSetName, job, provisioningErr)
 		} else {
 			p.logger.Errorf("unable to provision Orka runner for %s: %v", p.runnerScaleSetName, provisioningErr)
 		}
@@ -313,21 +308,18 @@ func (p *RunnerMessageProcessor) startRunner(job jobIdentity) {
 	executionErr = p.executeJobCommands(runnerContext, job, executor, commands)
 }
 
-// provisionRunnerWithRetry provisions a runner for job, retrying with backoff up to
-// maxProvisionAttempts times. The attempts and the waits between them share one context, which is
-// cancelled if the job is canceled upstream, so neither a long emulator deploy nor a wait of up to
-// two minutes outlives the job.
+// provisionRunnerWithRetry provisions a runner for job, retrying with backoff until an attempt
+// succeeds or the job is canceled upstream. The attempts, the waits between them, and any wait for
+// the capacity breaker share one context, which is cancelled if the job is canceled upstream, so
+// none of them outlives the job.
 //
-// Giving up does not strand the job. GitHub cancels an assignment that no runner picks up within
-// about 5 minutes and reissues the job under a new job ID, which arrives as a fresh JobAssigned and
-// starts a new round of attempts. Because the backoff alone waits nearly 4 minutes, that reissue
-// usually cancels a round before its last attempt, so the cap mostly ends rounds whose attempts fail
-// fast. The error log and the exhausted metric record the rounds that do run out.
-//
-// GitHub does not document the reissue. It was observed on an Orka 4.0 lab cluster against
-// github.com in November 2026, where the cancellation and the new assignment arrived in one message
-// batch. Because each reissue starts a fresh round, the cap alone does not stop an emulator pairing
-// that never fits from churning VMs; capacityBreaker bounds that across jobs.
+// It never gives up on a job by itself, because nothing would provision for the job again. GitHub
+// reissues a job that no runner picks up within about 5 minutes, by canceling it and assigning it
+// again under a new job ID, but it does not document that, and it does not keep doing it. On an
+// Orka 4.0 lab cluster against github.com in November 2026, each job was reissued twice and then
+// left assigned with no further messages. To keep retrying affordable, the waits level off at two
+// minutes, and capacityBreaker keeps an emulator pairing that never fits from churning a VM for
+// every queued job.
 func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, job jobIdentity) (*orka.VMCommandExecutor, []string, error) {
 	jobCtx, ok := p.beginProvisioning(ctx, job)
 	if !ok {
@@ -337,11 +329,13 @@ func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, j
 	defer p.capacityBreaker.release(job)
 
 	retryBackoff := p.newProvisionBackoff()
-	var lastErr error
 
-	for attempt := 1; attempt <= maxProvisionAttempts; attempt++ {
-		if !p.capacityBreaker.admit(job) {
-			return nil, nil, errProvisioningPaused
+	for attempt := 1; ; attempt++ {
+		if err := p.awaitProvisioningTurn(jobCtx, job); err != nil {
+			if ctx.Err() != nil {
+				return nil, nil, ctx.Err()
+			}
+			return nil, nil, fmt.Errorf("job %s was canceled upstream while waiting for its turn to provision: %w", job, context.Canceled)
 		}
 
 		executor, commands, err := p.runnerProvisioner.ProvisionRunner(jobCtx)
@@ -360,24 +354,16 @@ func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, j
 		}
 
 		p.recordProvisionOutcome(err)
-		lastErr = err
+
+		wait := retryBackoff.NextBackOff()
 		p.logger.Errorf(
-			"unable to provision Orka runner for %s and job %s (attempt %d/%d). More information: %v",
+			"unable to provision Orka runner for %s and job %s (attempt %d, retrying in %s). More information: %v",
 			p.runnerScaleSetName,
 			job,
 			attempt,
-			maxProvisionAttempts,
+			wait.Round(time.Second),
 			err,
 		)
-
-		if attempt == maxProvisionAttempts {
-			break
-		}
-
-		wait := retryBackoff.NextBackOff()
-		if wait == backoff.Stop {
-			break
-		}
 
 		select {
 		case <-jobCtx.Done():
@@ -388,18 +374,29 @@ func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, j
 		case <-time.After(wait):
 		}
 	}
+}
 
-	// The last attempt's error was logged just above, and the caller logs the returned error, so it
-	// is not repeated here.
-	p.logger.Errorf(
-		"giving up on provisioning a runner for %s and job %s after %d attempts. GitHub reissues the job if no runner picks it up within about 5 minutes, which starts a new round of attempts.",
-		p.runnerScaleSetName,
-		job,
-		maxProvisionAttempts,
-	)
-	p.metrics.IncRunnerProvisionExhausted()
+// awaitProvisioningTurn returns once job may start a provisioning attempt, which is right away
+// unless the capacity breaker has given the turn to another job, or once ctx is done.
+func (p *RunnerMessageProcessor) awaitProvisioningTurn(ctx context.Context, job jobIdentity) error {
+	logged := false
+	for {
+		admitted, turn := p.capacityBreaker.admit(job)
+		if admitted {
+			return nil
+		}
 
-	return nil, nil, fmt.Errorf("unable to provision Orka runner for %s and job %s after %d attempts: %w", p.runnerScaleSetName, job, maxProvisionAttempts, lastErr)
+		if !logged {
+			p.logger.Infof("waiting to provision a runner for %s and job %s while another job probes for emulator capacity", p.runnerScaleSetName, job)
+			logged = true
+		}
+
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-turn:
+		}
+	}
 }
 
 // recordProvisionOutcome feeds an attempt's outcome to the capacity breaker and reports when that
@@ -410,7 +407,7 @@ func (p *RunnerMessageProcessor) recordProvisionOutcome(err error) {
 	switch {
 	case opened:
 		p.logger.Errorf(
-			"%d provisioning attempts in a row for %s failed because a node had no room for the paired Android emulators. Provisioning one job at a time until an attempt succeeds; the other jobs wait for GitHub to reissue them. Pair fewer emulators with the VM config or free capacity on the nodes. Last failure: %v",
+			"%d provisioning attempts in a row for %s failed because a node had no room for the paired Android emulators. Provisioning one job at a time until an attempt succeeds; the other jobs wait for their turn. Pair fewer emulators with the VM config or free capacity on the nodes. Last failure: %v",
 			capacityBreakerThreshold,
 			p.runnerScaleSetName,
 			err,

@@ -64,7 +64,6 @@ var _ = Describe("Metrics", func() {
 			m.AddEmulatorOrphansReaped(2)
 			m.SetEmulatorDanglingConfigs(1)
 			m.SetEmulatorCapacityBreakerOpen(true)
-			m.IncRunnerProvisionExhausted()
 		}).ToNot(Panic())
 	})
 
@@ -78,7 +77,6 @@ var _ = Describe("Metrics", func() {
 		m.AddEmulatorOrphansReaped(3)
 		m.SetEmulatorDanglingConfigs(2)
 		m.SetEmulatorCapacityBreakerOpen(true)
-		m.IncRunnerProvisionExhausted()
 
 		Expect(sample(m, "emulator_deploy_total", map[string]string{"runner_name": "my-runner", "result": EmulatorDeploySuccess})).To(Equal(2.0))
 		Expect(sample(m, "emulator_deploy_total", map[string]string{"runner_name": "my-runner", "result": EmulatorDeployCapacity})).To(Equal(1.0))
@@ -86,7 +84,6 @@ var _ = Describe("Metrics", func() {
 		Expect(sample(m, "emulator_orphans_reaped_total", runner)).To(Equal(3.0))
 		Expect(sample(m, "emulator_dangling_configs", runner)).To(Equal(2.0))
 		Expect(sample(m, "emulator_capacity_breaker_open", runner)).To(Equal(1.0))
-		Expect(sample(m, "runner_provision_exhausted_total", runner)).To(Equal(1.0))
 
 		m.SetEmulatorCapacityBreakerOpen(false)
 		Expect(sample(m, "emulator_capacity_breaker_open", runner)).To(Equal(0.0))
