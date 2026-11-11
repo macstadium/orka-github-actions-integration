@@ -45,4 +45,18 @@ var _ = Describe("Exec", func() {
 		Expect(time.Since(start)).To(BeNumerically("<", 10*time.Second))
 		Expect(errors.Is(err, context.Canceled)).To(BeTrue())
 	})
+
+	It("reports a command that failed on its own even if the context is cancelled after it exits", func() {
+		_, err := ExecStringCommand(cancelledAfterExit{context.Background()}, "sh", []string{"-c", "echo boom >&2; exit 3"})
+
+		Expect(err).To(HaveOccurred())
+		Expect(err.Error()).To(ContainSubstring("boom"))
+		Expect(errors.Is(err, context.Canceled)).To(BeFalse())
+	})
 })
+
+// cancelledAfterExit models a cancel that lands after the process has exited on its own: Done never
+// closes, so the process is not killed, but Err already reports the cancellation when run checks it.
+type cancelledAfterExit struct{ context.Context }
+
+func (cancelledAfterExit) Err() error { return context.Canceled }

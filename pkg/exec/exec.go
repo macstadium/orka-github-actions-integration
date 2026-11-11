@@ -45,8 +45,9 @@ func run(ctx context.Context, command string, args []string) ([]byte, error) {
 		return out, nil
 	}
 
-	// A killed process reports only "signal: killed", which hides why it was killed.
-	if ctxErr := ctx.Err(); ctxErr != nil {
+	// A killed process reports only "signal: killed", which hides why it was killed. A process that
+	// exited on its own just before ctx was done failed for its own reasons, so it keeps its output.
+	if ctxErr := ctx.Err(); ctxErr != nil && (cmd.ProcessState == nil || !cmd.ProcessState.Exited()) {
 		return nil, fmt.Errorf("command '%s %s' was interrupted: %w", command, strings.Join(args, " "), ctxErr)
 	}
 
