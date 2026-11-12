@@ -13,9 +13,11 @@ import (
 	"sync"
 	"time"
 
+	backoff "github.com/cenkalti/backoff/v4"
 	"github.com/google/uuid"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
+	"github.com/macstadium/orka-github-actions-integration/pkg/metrics"
 	"github.com/macstadium/orka-github-actions-integration/pkg/orka"
 	"golang.org/x/crypto/ssh"
 )
@@ -43,7 +45,23 @@ func (k jobIdentity) String() string {
 	return fmt.Sprintf("jobId=%s runnerRequestId=%d", k.jobId, k.runnerRequestId)
 }
 
-func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerInterface, runnerProvisioner RunnerProvisionerInterface, vmTracker *VMTracker, runnerScaleSet *types.RunnerScaleSet) *RunnerMessageProcessor {
+// defaultProvisionBackoff waits 15s, 30s, 60s, then 120s between attempts, and 120s from then on,
+// so a transient failure clears quickly while a node that stays full is not hammered. Each wait is
+// randomized by up to half either way, so jobs that fail together do not retry together.
+func defaultProvisionBackoff() backoff.BackOff {
+	b := backoff.NewExponentialBackOff()
+	b.InitialInterval = 15 * time.Second
+	b.Multiplier = 2
+	b.MaxInterval = 2 * time.Minute
+	// Provisioning retries until the job is canceled upstream, however long that takes.
+	b.MaxElapsedTime = 0
+	b.Reset()
+
+	return b
+}
+
+// NewRunnerMessageProcessor builds a processor. m may be nil, in which case nothing is recorded.
+func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerInterface, runnerProvisioner RunnerProvisionerInterface, vmTracker *VMTracker, runnerScaleSet *types.RunnerScaleSet, m *metrics.Metrics) *RunnerMessageProcessor {
 	return &RunnerMessageProcessor{
 		ctx:                       ctx,
 		runnerManager:             runnerManager,
@@ -51,10 +69,13 @@ func NewRunnerMessageProcessor(ctx context.Context, runnerManager RunnerManagerI
 		logger:                    logging.Logger.Named(fmt.Sprintf("runner-message-processor-%d", runnerScaleSet.Id)),
 		runnerScaleSetName:        runnerScaleSet.Name,
 		upstreamCanceledJobs:      map[jobIdentity]bool{},
+		provisionCancels:          map[jobIdentity]context.CancelFunc{},
 		upstreamCanceledJobsMutex: sync.RWMutex{},
 		runnerContextCancels:      map[string]context.CancelFunc{},
 		runnerContextCancelsMutex: sync.Mutex{},
 		vmTracker:                 vmTracker,
+		metrics:                   m,
+		newProvisionBackoff:       defaultProvisionBackoff,
 	}
 }
 
@@ -105,7 +126,25 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 
 	p.logger.Infof("process batched runner scale set job messages with id %d and batch size %d", message.MessageId, len(batchedMessages))
 
-	inflight := int(p.provisioningInflight.Load())
+	// GitHub reissues a job that no runner picked up by canceling it and assigning it again under a
+	// new job ID, in the same batch. Apply the cancellations first, so the canceled job no longer
+	// counts as in flight when the batch's assignments are weighed, and its reissue is not skipped.
+	messageTypes := make([]string, len(batchedMessages))
+	for i, message := range batchedMessages {
+		var messageType types.JobMessageType
+		if err := json.Unmarshal(message, &messageType); err != nil {
+			return fmt.Errorf("could not decode job message type. %w", err)
+		}
+		messageTypes[i] = messageType.MessageType
+
+		if messageType.MessageType == "JobCompleted" {
+			if err := p.processJobCompleted(message); err != nil {
+				return err
+			}
+		}
+	}
+
+	inflight := p.provisioningInflight()
 	requiredRunners := message.Statistics.TotalAssignedJobs - message.Statistics.TotalRegisteredRunners - inflight
 	provisionedRunners := 0
 
@@ -129,13 +168,8 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 	}
 
 	var availableJobs []int64
-	for _, message := range batchedMessages {
-		var messageType types.JobMessageType
-		if err := json.Unmarshal(message, &messageType); err != nil {
-			return fmt.Errorf("could not decode job message type. %w", err)
-		}
-
-		switch messageType.MessageType {
+	for i, message := range batchedMessages {
+		switch messageTypes[i] {
 		case "JobAvailable":
 			var jobAvailable types.JobAvailable
 			if err := json.Unmarshal(message, &jobAvailable); err != nil {
@@ -163,33 +197,39 @@ func (p *RunnerMessageProcessor) processRunnerMessage(message *types.RunnerScale
 			}
 			p.logger.Infof("Job started message received for JobId: %s, RunnerRequestId: %d, RunnerId: %d, RunnerName: %s", jobStarted.JobId, jobStarted.RunnerRequestId, jobStarted.RunnerId, jobStarted.RunnerName)
 		case "JobCompleted":
-			var jobCompleted types.JobCompleted
-			if err := json.Unmarshal(message, &jobCompleted); err != nil {
-				return fmt.Errorf("could not decode job completed message. %w", err)
-			}
-
-			p.logger.Infof("Job completed message received for JobId: %s, RunnerRequestId: %d, RunnerId: %d, RunnerName: %s, with Result: %s", jobCompleted.JobId, jobCompleted.RunnerRequestId, jobCompleted.RunnerId, jobCompleted.RunnerName, jobCompleted.Result)
-
-			runnerName := jobCompleted.RunnerName
-			if runnerName != "" {
-				p.cancelRunnerContext(runnerName, "Job completed webhook received")
-			} else {
-				p.logger.Warnf("Job completed message received for JobId: %s, RunnerRequestId: %d, RunnerId: %d, but RunnerName is empty. Skipping cleanup.", jobCompleted.JobId, jobCompleted.RunnerRequestId, jobCompleted.RunnerId)
-			}
-
-			if (jobCompleted.JobId != "" || jobCompleted.RunnerRequestId != 0) && (jobCompleted.Result == cancelledStatus || jobCompleted.Result == ignoredStatus || jobCompleted.Result == abandonedStatus) {
-				jobIdentity := jobIdentity{jobId: jobCompleted.JobId, runnerRequestId: jobCompleted.RunnerRequestId}
-				p.logger.Infof("setting upstream canceled job for %s", jobIdentity)
-				p.setUpstreamCanceledJob(jobIdentity)
-			}
+			// Processed ahead of the rest of the batch.
 		default:
-			p.logger.Infof("unknown job message type %s", messageType.MessageType)
+			p.logger.Infof("unknown job message type %s", messageTypes[i])
 		}
 	}
 
 	err := p.runnerManager.AcquireJobs(p.ctx, availableJobs)
 	if err != nil {
 		return fmt.Errorf("could not acquire jobs. %w", err)
+	}
+
+	return nil
+}
+
+func (p *RunnerMessageProcessor) processJobCompleted(message json.RawMessage) error {
+	var jobCompleted types.JobCompleted
+	if err := json.Unmarshal(message, &jobCompleted); err != nil {
+		return fmt.Errorf("could not decode job completed message. %w", err)
+	}
+
+	p.logger.Infof("Job completed message received for JobId: %s, RunnerRequestId: %d, RunnerId: %d, RunnerName: %s, with Result: %s", jobCompleted.JobId, jobCompleted.RunnerRequestId, jobCompleted.RunnerId, jobCompleted.RunnerName, jobCompleted.Result)
+
+	runnerName := jobCompleted.RunnerName
+	if runnerName != "" {
+		p.cancelRunnerContext(runnerName, "Job completed webhook received")
+	} else {
+		p.logger.Warnf("Job completed message received for JobId: %s, RunnerRequestId: %d, RunnerId: %d, but RunnerName is empty. Skipping cleanup.", jobCompleted.JobId, jobCompleted.RunnerRequestId, jobCompleted.RunnerId)
+	}
+
+	if (jobCompleted.JobId != "" || jobCompleted.RunnerRequestId != 0) && (jobCompleted.Result == cancelledStatus || jobCompleted.Result == ignoredStatus || jobCompleted.Result == abandonedStatus) {
+		jobIdentity := jobIdentity{jobId: jobCompleted.JobId, runnerRequestId: jobCompleted.RunnerRequestId}
+		p.logger.Infof("setting upstream canceled job for %s", jobIdentity)
+		p.setUpstreamCanceledJob(jobIdentity)
 	}
 
 	return nil
@@ -209,13 +249,11 @@ func (p *RunnerMessageProcessor) AdoptVM(vmName string) {
 }
 
 func (p *RunnerMessageProcessor) startRunner(job jobIdentity) {
-	p.provisioningInflight.Add(1)
 	var executionErr error
 
 	defer p.removeUpstreamCanceledJob(job)
 
 	executor, commands, provisioningErr := p.provisionRunnerWithRetry(p.ctx, job)
-	p.provisioningInflight.Add(-1)
 	if provisioningErr != nil {
 		if errors.Is(provisioningErr, context.Canceled) {
 			p.logger.Infof("provisioning canceled for %s", p.runnerScaleSetName)
@@ -271,33 +309,158 @@ func (p *RunnerMessageProcessor) startRunner(job jobIdentity) {
 	executionErr = p.executeJobCommands(runnerContext, job, executor, commands)
 }
 
+// provisionRunnerWithRetry provisions a runner for job, retrying with backoff until an attempt
+// succeeds or the job is canceled upstream. The attempts, the waits between them, and any wait for
+// the capacity breaker share one context, which is cancelled if the job is canceled upstream, so
+// none of them outlives the job.
+//
+// It never gives up on a job by itself, because nothing would provision for the job again. GitHub
+// reissues a job that no runner picks up within about 5 minutes, by canceling it and assigning it
+// again under a new job ID, but it does not document that, and it does not keep doing it. On an
+// Orka 4.0 lab cluster against github.com in November 2026, each job was reissued twice and then
+// left assigned with no further messages. To keep retrying affordable, the waits level off at about
+// two minutes, and capacityBreaker keeps an emulator pairing that never fits from churning a VM for
+// every queued job.
 func (p *RunnerMessageProcessor) provisionRunnerWithRetry(ctx context.Context, job jobIdentity) (*orka.VMCommandExecutor, []string, error) {
-	for attempt := 1; !p.isUpstreamCanceled(job); attempt++ {
-		executor, commands, err := p.runnerProvisioner.ProvisionRunner(ctx)
+	jobCtx, ok := p.beginProvisioning(ctx, job)
+	if !ok {
+		return nil, nil, fmt.Errorf("job %s was canceled upstream: %w", job, context.Canceled)
+	}
+	defer p.endProvisioning(job)
+	defer p.capacityBreaker.release(job)
+
+	retryBackoff := p.newProvisionBackoff()
+
+	for attempt := 1; ; attempt++ {
+		if err := p.awaitProvisioningTurn(jobCtx, job); err != nil {
+			if ctx.Err() != nil {
+				return nil, nil, ctx.Err()
+			}
+			return nil, nil, fmt.Errorf("job %s was canceled upstream while waiting for its turn to provision: %w", job, context.Canceled)
+		}
+
+		executor, commands, err := p.runnerProvisioner.ProvisionRunner(jobCtx)
+
 		if ctx.Err() != nil {
 			return nil, nil, ctx.Err()
 		}
 
 		if err == nil {
+			p.recordProvisionOutcome(nil)
 			return executor, commands, nil
 		}
 
+		if p.isUpstreamCanceled(job) {
+			return nil, nil, fmt.Errorf("job %s was canceled upstream during provisioning: %w", job, context.Canceled)
+		}
+
+		p.recordProvisionOutcome(err)
+
+		wait := retryBackoff.NextBackOff()
 		p.logger.Errorf(
-			"unable to provision Orka runner for %s and job %s (attempt %d). More information: %v",
+			"unable to provision Orka runner for %s and job %s (attempt %d, retrying in %s). More information: %v",
 			p.runnerScaleSetName,
 			job,
 			attempt,
+			wait.Round(time.Second),
 			err,
 		)
 
 		select {
+		case <-jobCtx.Done():
+			if ctx.Err() != nil {
+				return nil, nil, ctx.Err()
+			}
+			return nil, nil, fmt.Errorf("job %s was canceled upstream while waiting to retry: %w", job, context.Canceled)
+		case <-time.After(wait):
+		}
+	}
+}
+
+// awaitProvisioningTurn returns once job may start a provisioning attempt, which is right away
+// unless the capacity breaker has given the turn to another job, or once ctx is done.
+func (p *RunnerMessageProcessor) awaitProvisioningTurn(ctx context.Context, job jobIdentity) error {
+	logged := false
+	for {
+		admitted, turn := p.capacityBreaker.admit(job)
+		if admitted {
+			return nil
+		}
+
+		if !logged {
+			p.logger.Infof("waiting to provision a runner for %s and job %s while another job probes for emulator capacity", p.runnerScaleSetName, job)
+			logged = true
+		}
+
+		select {
 		case <-ctx.Done():
-			return nil, nil, ctx.Err()
-		case <-time.After(15 * time.Second):
+			return ctx.Err()
+		case <-turn:
+		}
+	}
+}
+
+// recordProvisionOutcome feeds an attempt's outcome to the capacity breaker and reports when that
+// opens or closes it.
+func (p *RunnerMessageProcessor) recordProvisionOutcome(err error) {
+	opened, closed := p.capacityBreaker.record(err)
+
+	switch {
+	case opened:
+		p.logger.Errorf(
+			"%d provisioning attempts in a row for %s failed because a node had no room for the paired Android emulators. Provisioning one job at a time until an attempt succeeds; the other jobs wait for their turn. Pair fewer emulators with the VM config or free capacity on the nodes. Last failure: %v",
+			capacityBreakerThreshold,
+			p.runnerScaleSetName,
+			err,
+		)
+		p.metrics.SetEmulatorCapacityBreakerOpen(true)
+	case closed:
+		p.logger.Infof("a runner for %s was provisioned, so every job is provisioned again", p.runnerScaleSetName)
+		p.metrics.SetEmulatorCapacityBreakerOpen(false)
+	}
+}
+
+// beginProvisioning derives the context for provisioning a job and registers its cancel func, unless
+// the job has already been canceled upstream. The check and the registration share a lock with
+// setUpstreamCanceledJob, so a cancellation can never slip in between them unnoticed.
+func (p *RunnerMessageProcessor) beginProvisioning(ctx context.Context, job jobIdentity) (context.Context, bool) {
+	p.upstreamCanceledJobsMutex.Lock()
+	defer p.upstreamCanceledJobsMutex.Unlock()
+
+	if p.upstreamCanceledJobs[job] {
+		return nil, false
+	}
+
+	jobCtx, cancel := context.WithCancel(ctx)
+	p.provisionCancels[job] = cancel
+
+	return jobCtx, true
+}
+
+// provisioningInflight counts the jobs being provisioned, leaving out jobs canceled upstream. Those are
+// only cleaning up, and counting them would let a canceled job take the slot of its own reissue.
+func (p *RunnerMessageProcessor) provisioningInflight() int {
+	p.upstreamCanceledJobsMutex.RLock()
+	defer p.upstreamCanceledJobsMutex.RUnlock()
+
+	inflight := 0
+	for job := range p.provisionCancels {
+		if !p.upstreamCanceledJobs[job] {
+			inflight++
 		}
 	}
 
-	return nil, nil, fmt.Errorf("unable to provision Orka runner for %s and job %s", p.runnerScaleSetName, job)
+	return inflight
+}
+
+func (p *RunnerMessageProcessor) endProvisioning(job jobIdentity) {
+	p.upstreamCanceledJobsMutex.Lock()
+	defer p.upstreamCanceledJobsMutex.Unlock()
+
+	if cancel, ok := p.provisionCancels[job]; ok {
+		cancel()
+		delete(p.provisionCancels, job)
+	}
 }
 
 func (p *RunnerMessageProcessor) executeJobCommands(ctx context.Context, job jobIdentity, executor *orka.VMCommandExecutor, commands []string) error {
@@ -328,6 +491,13 @@ func (p *RunnerMessageProcessor) setUpstreamCanceledJob(job jobIdentity) {
 	p.upstreamCanceledJobsMutex.Lock()
 	defer p.upstreamCanceledJobsMutex.Unlock()
 	p.upstreamCanceledJobs[job] = true
+
+	// Stop provisioning that is still running, which may be minutes into an emulator deploy or
+	// waiting to retry. The provisioner cleans up whatever it had brought up.
+	if cancel, ok := p.provisionCancels[job]; ok {
+		p.logger.Infof("interrupting in-flight provisioning for %s, which was canceled upstream", job)
+		cancel()
+	}
 }
 
 func (p *RunnerMessageProcessor) removeUpstreamCanceledJob(job jobIdentity) {

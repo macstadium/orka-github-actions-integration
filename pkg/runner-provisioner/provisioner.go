@@ -8,14 +8,24 @@ import (
 	"time"
 
 	backoff "github.com/cenkalti/backoff/v4"
+	"github.com/macstadium/orka-github-actions-integration/pkg/emulator"
 	"github.com/macstadium/orka-github-actions-integration/pkg/env"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/actions"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
 	"github.com/macstadium/orka-github-actions-integration/pkg/logging"
+	"github.com/macstadium/orka-github-actions-integration/pkg/metrics"
 	"github.com/macstadium/orka-github-actions-integration/pkg/orka"
 	"github.com/macstadium/orka-github-actions-integration/pkg/utils"
 	"go.uber.org/zap"
 )
+
+// EmulatorSource says which emulators to pair with a VM. emulator.Resolver implements it.
+type EmulatorSource interface {
+	// Supported reports whether the cluster has shown it can serve emulators at all.
+	Supported() bool
+	// Emulators returns the emulators to deploy alongside a VM from vmConfig, in deploy order.
+	Emulators(vmConfig string) []emulator.EmulatorRef
+}
 
 type RunnerProvisioner struct {
 	runnerScaleSet *types.RunnerScaleSet
@@ -23,6 +33,8 @@ type RunnerProvisioner struct {
 	envData        *env.Data
 
 	orkaClient orka.OrkaService
+	emulators  EmulatorSource
+	metrics    *metrics.Metrics
 	logger     *zap.SugaredLogger
 
 	mu sync.Mutex
@@ -52,7 +64,10 @@ var commands_template = []string{
 
 func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) (*orka.VMCommandExecutor, []string, error) {
 	p.logger.Infof("deploying Orka VM with prefix %s", p.runnerScaleSet.Name)
-	vmResponse, err := p.orkaClient.DeployVM(ctx, p.runnerScaleSet.Name, p.envData.OrkaVMConfig)
+	// The VM deploy is not cancellable. The VM exists before the CLI returns, and its generated name
+	// is only known from the response, so killing the CLI midway would leak the VM with no cleanup
+	// registered. A cancellation instead takes effect just below, once cleanup is in place.
+	vmResponse, err := p.orkaClient.DeployVM(context.WithoutCancel(ctx), p.runnerScaleSet.Name, p.envData.OrkaVMConfig)
 	if err != nil {
 		p.logger.Errorf("failed to deploy Orka VM: %v", err)
 		return nil, nil, err
@@ -70,9 +85,23 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) (*orka.VMComman
 		}
 	}()
 
+	if err := ctx.Err(); err != nil {
+		p.logger.Infof("provisioning of VM %s was cancelled while the VM was deploying", runnerName)
+		return nil, nil, err
+	}
+
 	vmIP, err := p.getRealVMIP(vmResponse.IP)
 	if err != nil {
 		p.logger.Errorf("failed to get real VM IP for %s: %v", runnerName, err)
+		return nil, nil, err
+	}
+
+	// Emulators are deployed before the JIT runner config because a cold deploy blocks on an
+	// sdkmanager pull that can run for minutes, and a JIT config created first would sit aging
+	// through that wait.
+	emulators, err := p.deployEmulators(ctx, runnerName, vmResponse.Node)
+	if err != nil {
+		p.logger.Errorf("failed to deploy emulators for %s: %v", runnerName, err)
 		return nil, nil, err
 	}
 
@@ -93,7 +122,12 @@ func (p *RunnerProvisioner) ProvisionRunner(ctx context.Context) (*orka.VMComman
 		Logger:     p.logger,
 	}
 
-	commands := buildCommands(jitConfig.EncodedJITConfig, p.envData.GitHubRunnerVersion, p.envData.OrkaVMUsername)
+	exports, dropped := buildEmulatorExports(emulators)
+	for _, alias := range dropped {
+		p.logger.Warnf("not exporting ORKA_EMULATOR_%s_* for emulator config %s on VM %s: %s", alias.Sanitized, alias.Config, runnerName, alias.Reason)
+	}
+
+	commands := buildCommands(jitConfig.EncodedJITConfig, p.envData.GitHubRunnerVersion, p.envData.OrkaVMUsername, exports)
 
 	provisioningSucceeded = true
 
@@ -136,6 +170,7 @@ func (p *RunnerProvisioner) cleanupResources(ctx context.Context, runnerName str
 		break
 	}
 
+	p.deleteEmulators(ctx, runnerName)
 	p.deleteVM(ctx, runnerName)
 }
 
@@ -245,7 +280,11 @@ func (p *RunnerProvisioner) createRunner(ctx context.Context, runnerName string)
 	return jitConfig, nil
 }
 
-func buildCommands(jitConfig, version, username string) []string {
+// buildCommands renders the command stream run over SSH in the VM. Exports go ahead of the runner
+// so the environment is in place when run.sh starts; the runner passes its own environment through
+// to job steps, which is the only channel a job has for learning its emulators' addresses, since it
+// cannot reach the Orka control plane from inside the VM.
+func buildCommands(jitConfig, version, username string, exports []string) []string {
 	commands := utils.Map(
 		commands_template,
 		func(cmd string) string {
@@ -256,15 +295,20 @@ func buildCommands(jitConfig, version, username string) []string {
 			return result
 		},
 	)
-	return commands
+
+	return append(append([]string(nil), exports...), commands...)
 }
 
-func NewRunnerProvisioner(runnerScaleSet *types.RunnerScaleSet, actionsClient actions.ActionsService, orkaClient orka.OrkaService, envData *env.Data) *RunnerProvisioner {
+// NewRunnerProvisioner builds a provisioner. emulators may be nil, in which case no emulators are
+// ever paired; m may be nil, in which case nothing is recorded.
+func NewRunnerProvisioner(runnerScaleSet *types.RunnerScaleSet, actionsClient actions.ActionsService, orkaClient orka.OrkaService, envData *env.Data, emulators EmulatorSource, m *metrics.Metrics) *RunnerProvisioner {
 	return &RunnerProvisioner{
 		runnerScaleSet: runnerScaleSet,
 		actionsClient:  actionsClient,
 		envData:        envData,
 		orkaClient:     orkaClient,
+		emulators:      emulators,
+		metrics:        m,
 		logger:         logging.Logger.Named(fmt.Sprintf("runner-provisioner-%d", runnerScaleSet.Id)),
 	}
 }

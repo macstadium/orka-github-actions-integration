@@ -41,6 +41,26 @@ func (m *MockOrkaClient) ListVMs(ctx context.Context, namePrefix string) ([]*ork
 	return nil, nil
 }
 
+func (m *MockOrkaClient) DeployEmulator(ctx context.Context, name, vmName, config string) (*orka.OrkaEmulatorResponseModel, error) {
+	return nil, nil
+}
+
+func (m *MockOrkaClient) ListVMConfigs(ctx context.Context) ([]*orka.OrkaVMConfigResponseModel, error) {
+	return nil, nil
+}
+
+func (m *MockOrkaClient) DeleteEmulator(ctx context.Context, name string) error {
+	return nil
+}
+
+func (m *MockOrkaClient) ListEmulators(ctx context.Context) ([]*orka.OrkaEmulatorResponseModel, error) {
+	return nil, nil
+}
+
+func (m *MockOrkaClient) ListEmulatorConfigs(ctx context.Context) ([]*orka.OrkaEmulatorConfigResponseModel, error) {
+	return nil, nil
+}
+
 type MockActionsClient struct {
 	GetRunnerFunc func(ctx context.Context, runnerName string) (*types.RunnerReference, error)
 }

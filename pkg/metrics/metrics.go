@@ -13,8 +13,18 @@ import (
 	"go.uber.org/zap"
 )
 
+// Results recorded by RecordEmulatorDeploy.
+const (
+	EmulatorDeploySuccess  = "success"
+	EmulatorDeployCapacity = "capacity"
+	EmulatorDeployError    = "error"
+)
+
+// Metrics holds every series the runner exports. A nil *Metrics is valid and records nothing, so
+// callers do not need to branch on whether metrics are enabled.
 type Metrics struct {
-	registry *prometheus.Registry
+	registry   *prometheus.Registry
+	runnerName string
 
 	totalAvailableJobs     *prometheus.GaugeVec
 	totalAcquiredJobs      *prometheus.GaugeVec
@@ -23,13 +33,21 @@ type Metrics struct {
 	totalRegisteredRunners *prometheus.GaugeVec
 	totalBusyRunners       *prometheus.GaugeVec
 	totalIdleRunners       *prometheus.GaugeVec
+
+	emulatorDeploys         *prometheus.CounterVec
+	emulatorDeployDuration  *prometheus.HistogramVec
+	emulatorOrphansReaped   *prometheus.CounterVec
+	emulatorDanglingConfigs *prometheus.GaugeVec
+	emulatorCapacityBreaker *prometheus.GaugeVec
 }
 
-func newMetrics() *Metrics {
+// New builds the series without starting the HTTP server or the stats poller, which Start adds.
+func New(runnerName string) *Metrics {
 	registry := prometheus.NewRegistry()
 
 	m := &Metrics{
-		registry: registry,
+		registry:   registry,
+		runnerName: runnerName,
 
 		totalAvailableJobs: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "runner_scale_set_total_available_jobs",
@@ -65,6 +83,33 @@ func newMetrics() *Metrics {
 			Name: "runner_scale_set_total_idle_runners",
 			Help: "Total number of idle runners",
 		}, []string{"runner_name"}),
+
+		emulatorDeploys: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "emulator_deploy_total",
+			Help: "Android emulator deploys, by result: success, capacity (the node had no room for another emulator), or error",
+		}, []string{"runner_name", "result"}),
+
+		emulatorDeployDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "emulator_deploy_duration_seconds",
+			Help: "Time taken by each Android emulator deploy, whatever its result",
+			// A warm deploy takes seconds; a cold one waits on a system image pull for minutes.
+			Buckets: []float64{5, 10, 20, 30, 60, 120, 300, 600},
+		}, []string{"runner_name"}),
+
+		emulatorOrphansReaped: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "emulator_orphans_reaped_total",
+			Help: "Android emulators deleted at startup because their paired VM no longer exists",
+		}, []string{"runner_name"}),
+
+		emulatorDanglingConfigs: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "emulator_dangling_configs",
+			Help: "Android emulator configs that will never be deployed, because their name does not follow the naming convention or matches no VM config in the cluster",
+		}, []string{"runner_name"}),
+
+		emulatorCapacityBreaker: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "emulator_capacity_breaker_open",
+			Help: "1 while only one job at a time is provisioned because attempts keep failing for lack of Android emulator capacity",
+		}, []string{"runner_name"}),
 	}
 
 	registry.MustRegister(
@@ -75,9 +120,56 @@ func newMetrics() *Metrics {
 		m.totalRegisteredRunners,
 		m.totalBusyRunners,
 		m.totalIdleRunners,
+		m.emulatorDeploys,
+		m.emulatorDeployDuration,
+		m.emulatorOrphansReaped,
+		m.emulatorDanglingConfigs,
+		m.emulatorCapacityBreaker,
 	)
 
 	return m
+}
+
+// RecordEmulatorDeploy counts one emulator deploy and observes how long it took.
+func (m *Metrics) RecordEmulatorDeploy(result string, duration time.Duration) {
+	if m == nil {
+		return
+	}
+
+	m.emulatorDeploys.WithLabelValues(m.runnerName, result).Inc()
+	m.emulatorDeployDuration.WithLabelValues(m.runnerName).Observe(duration.Seconds())
+}
+
+// AddEmulatorOrphansReaped counts emulators deleted by the startup orphan sweep.
+func (m *Metrics) AddEmulatorOrphansReaped(count int) {
+	if m == nil || count <= 0 {
+		return
+	}
+
+	m.emulatorOrphansReaped.WithLabelValues(m.runnerName).Add(float64(count))
+}
+
+// SetEmulatorDanglingConfigs records the dangling config count from the latest resolution pass.
+func (m *Metrics) SetEmulatorDanglingConfigs(count int) {
+	if m == nil {
+		return
+	}
+
+	m.emulatorDanglingConfigs.WithLabelValues(m.runnerName).Set(float64(count))
+}
+
+// SetEmulatorCapacityBreakerOpen records whether the emulator capacity breaker is open.
+func (m *Metrics) SetEmulatorCapacityBreakerOpen(open bool) {
+	if m == nil {
+		return
+	}
+
+	value := 0.0
+	if open {
+		value = 1
+	}
+
+	m.emulatorCapacityBreaker.WithLabelValues(m.runnerName).Set(value)
 }
 
 func Start(
@@ -89,7 +181,7 @@ func Start(
 	groupId int,
 ) *Metrics {
 
-	m := newMetrics()
+	m := New(runnerName)
 
 	// Start HTTP server
 	go m.startServer(ctx, logger, envData.MetricsAddr)

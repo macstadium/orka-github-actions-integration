@@ -23,8 +23,10 @@ func TestProvisioner(t *testing.T) {
 type MockActionsService struct {
 	GetRunnerFunc     func(ctx context.Context, runnerName string) (*types.RunnerReference, error)
 	DeleteRunnerFunc  func(ctx context.Context, runnerID int) error
+	CreateRunnerFunc  func(ctx context.Context, runnerScaleSetID int, runnerName string) (*types.RunnerScaleSetJitRunnerConfig, error)
 	GetRunnerCalls    int
 	DeleteRunnerCalls int
+	CreateRunnerCalls int
 }
 
 func (m *MockActionsService) GetRunner(ctx context.Context, runnerName string) (*types.RunnerReference, error) {
@@ -57,6 +59,10 @@ func (m *MockActionsService) DeleteRunnerScaleSet(ctx context.Context, runnerSca
 }
 
 func (m *MockActionsService) CreateRunner(ctx context.Context, runnerScaleSetID int, runnerName string) (*types.RunnerScaleSetJitRunnerConfig, error) {
+	m.CreateRunnerCalls++
+	if m.CreateRunnerFunc != nil {
+		return m.CreateRunnerFunc(ctx, runnerScaleSetID, runnerName)
+	}
 	return nil, nil
 }
 

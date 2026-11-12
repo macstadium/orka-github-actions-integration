@@ -23,6 +23,9 @@ const (
 	OrkaEnableNodeIPMappingEnvName = "ORKA_ENABLE_NODE_IP_MAPPING"
 	OrkaNodeIPMappingEnvName       = "ORKA_NODE_IP_MAPPING"
 
+	OrkaEmulatorDeployTimeoutEnvName     = "ORKA_EMULATOR_DEPLOY_TIMEOUT"
+	EmulatorConfigRefreshIntervalEnvName = "EMULATOR_CONFIG_REFRESH_INTERVAL"
+
 	RunnersEnvName = "RUNNERS"
 
 	RunnerDeregistrationTimeoutEnvName      = "RUNNER_DEREGISTRATION_TIMEOUT"
@@ -43,3 +46,7 @@ const (
 
 	EnableReconciliationEnvName = "ENABLE_RECONCILIATION"
 )
+
+// OperatorUnschedulableTimeoutMinutes is the orka-operator's default AVD_UNSCHEDULABLE_TIMEOUT, after
+// which it marks an emulator that the scheduler cannot place as Failed.
+const OperatorUnschedulableTimeoutMinutes = 5

@@ -10,6 +10,7 @@ import (
 	"syscall"
 
 	"github.com/macstadium/orka-github-actions-integration/pkg/constants"
+	"github.com/macstadium/orka-github-actions-integration/pkg/emulator"
 	"github.com/macstadium/orka-github-actions-integration/pkg/env"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/actions"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/runners"
@@ -82,8 +83,10 @@ func main() {
 		logger.Infof("created runner scale set %s (id=%d)", runnerScaleSet.Name, runnerScaleSet.Id)
 	}
 
+	// Nil when metrics are disabled; every recorder method is nil-safe.
+	var appMetrics *metrics.Metrics
 	if envData.EnableMetrics {
-		metrics.Start(ctx, logger, envData, actionsClient, runnerName, groupId)
+		appMetrics = metrics.Start(ctx, logger, envData, actionsClient, runnerName, groupId)
 	}
 
 	orkaClient, err := orka.NewOrkaClient(envData, ctx)
@@ -91,10 +94,20 @@ func main() {
 		panic(fmt.Sprintf("unable to access Orka cluster. More info: %s", err.Error()))
 	}
 
+	if envData.EmulatorDeployTimeoutTooShort() {
+		logger.Warnf("%s is %d minutes, which does not outlast the orka-operator's %d-minute AVD_UNSCHEDULABLE_TIMEOUT. An emulator that cannot be scheduled will be reported as a generic timeout rather than a capacity failure. Set it above %d.", env.OrkaEmulatorDeployTimeoutEnvName, envData.OrkaEmulatorDeployTimeout, env.OperatorUnschedulableTimeoutMinutes, env.OperatorUnschedulableTimeoutMinutes)
+	}
+
+	// Resolve once before any runner is provisioned, so the first job already gets its emulators.
+	// A failure here is a warning, never fatal: emulators stay disabled until a list succeeds.
+	emulatorResolver := emulator.NewResolver(orkaClient, []string{envData.OrkaVMConfig}, appMetrics, logging.Logger.Named("emulator-resolver"))
+	_ = emulatorResolver.Refresh(ctx)
+	go emulatorResolver.Start(ctx, envData.EmulatorConfigRefreshInterval)
+
 	vmTracker := runners.NewVMTracker(orkaClient, actionsClient, logger)
 	go vmTracker.Start(ctx, envData.VMTrackerInterval)
 
-	runnerProvisioner := provisioner.NewRunnerProvisioner(runnerScaleSet, actionsClient, orkaClient, envData)
+	runnerProvisioner := provisioner.NewRunnerProvisioner(runnerScaleSet, actionsClient, orkaClient, envData, emulatorResolver, appMetrics)
 
 	var existingVMs []*orka.OrkaVMInfo
 	if envData.EnableReconciliation {
@@ -121,7 +134,7 @@ func main() {
 			panic(fmt.Sprintf("error recreating scale set after active session conflict: %s", err.Error()))
 		}
 		logger.Infof("recreated scale set %s (id=%d)", runnerScaleSet.Name, runnerScaleSet.Id)
-		runnerProvisioner = provisioner.NewRunnerProvisioner(runnerScaleSet, actionsClient, orkaClient, envData)
+		runnerProvisioner = provisioner.NewRunnerProvisioner(runnerScaleSet, actionsClient, orkaClient, envData, emulatorResolver, appMetrics)
 		runnerManager, err = runners.NewRunnerManager(ctx, actionsClient, runnerScaleSet.Id)
 	}
 	if err != nil {
@@ -152,11 +165,11 @@ func main() {
 		}
 	}()
 
-	runnerMessageProcessor := runners.NewRunnerMessageProcessor(ctx, runnerManager, runnerProvisioner, vmTracker, runnerScaleSet)
+	runnerMessageProcessor := runners.NewRunnerMessageProcessor(ctx, runnerManager, runnerProvisioner, vmTracker, runnerScaleSet, appMetrics)
 
 	if envData.EnableReconciliation {
-		vmReconciler := reconciler.NewVMReconciler(actionsClient, runnerProvisioner, runnerMessageProcessor.AdoptVM, envData)
-		go vmReconciler.ReconcileVMs(ctx, existingVMs)
+		vmReconciler := reconciler.NewVMReconciler(actionsClient, orkaClient, runnerProvisioner, runnerMessageProcessor.AdoptVM, envData, appMetrics)
+		go vmReconciler.ReconcileVMs(ctx, existingVMs, runnerScaleSet.Name)
 	}
 
 	run(ctx, runnerMessageProcessor, runnerScaleSet, logger)

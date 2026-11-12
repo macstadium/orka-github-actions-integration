@@ -67,6 +67,8 @@ The Orka GitHub runner requires the following environment variabales to be confi
 * `ORKA_VM_USERNAME`: Specifies the username for the deployed VMs. If no value is provided, it defaults to admin.
 * `ORKA_VM_PASSWORD`: Specifies the password for the deployed VMs. If no value is provided, it defaults to admin.
 * `ORKA_VM_METADATA`: Specifies custom VM metadata passed to the VM. Must be formatted as key=value comma separated pairs.
+* `ORKA_EMULATOR_DEPLOY_TIMEOUT`: (Optional) How many minutes to wait for each Android emulator to reach a running state. Defaults to `10`. Keep it above `5`, the orka-operator's `AVD_UNSCHEDULABLE_TIMEOUT`, or a node without room for an emulator is reported as a generic timeout; the runner warns at startup if it is not. See [Android emulators](#android-emulators).
+* `EMULATOR_CONFIG_REFRESH_INTERVAL`: (Optional) How often the runner re-reads the cluster's Android emulator configs, so configs added or removed take effect without a restart (e.g., `60s`, `5m`). Defaults to `60s`.
 * `ORKA_ENABLE_NODE_IP_MAPPING`: Specifies whether to enable the mapping of Orka node IPs to external IPs.
 * `ORKA_NODE_IP_MAPPING`: Defines the mapping of Orka node internal IPs to external host IPs.
 * `RUNNERS`: A JSON array containing configuration details of the GitHub runner scale set that will be created. Currently only one runner is supported. See [here](#how-to-use-multiple-runners) for how to use multiple runners. Example usage: `RUNNERS='[{"name":"my-github-runner", "id": 1}]'`. The `name` field should match the value specified in the `runs-on` field in the Actions workflow. The `id` field should be used to differentiate runners with GitHub. We default to `1` if it is not defined. See an example [here](./examples/ci.yml).
@@ -108,6 +110,88 @@ docker run -v /path/to/.env:/.env ghcr.io/macstadium/orka-github-runner:<tag-nam
 Replace <tag-name> with the version or tag of the Orka GitHub runner you want to use.
 
 > **NOTE**: The private key must be in PKCS#1 RSA private key format. See [here](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/managing-private-keys-for-github-apps#generating-private-keys) for more information. If needed, convert the private key to the correct format: `ssh-keygen -p -m pem -f /path/to/private-key.pem`
+
+### Android emulators
+
+The Orka GitHub runner can pair one or more Android emulators with every runner VM it deploys, so a workflow can run instrumented Android tests against a real emulator on the same host as its macOS runner.
+
+There is no runner setting to turn this on. Emulators are paired by name: the runner deploys an emulator from every Android emulator config whose name is the runner's `ORKA_VM_CONFIG` followed by `-emulator`, or by `-emulator-` and a suffix. For a runner whose `ORKA_VM_CONFIG` is `ios-build`:
+
+```shell
+orka emc create ios-build-emulator --platform android-36 --image-type google_apis
+orka emc create ios-build-emulator-tablet --platform android-35 --image-type google_apis --device-profile pixel_tablet
+```
+
+Every job on that runner now gets two emulators: `ios-build-emulator` first, then the suffixed configs in order of their suffix. Delete the configs to turn emulators off again. The runner re-reads emulator configs every `EMULATOR_CONFIG_REFRESH_INTERVAL`, so neither change needs a restart; VMs already running keep the emulators they started with.
+
+The naming rule is exact:
+
+* `ios-build-emulator` and `ios-build-emulator-<suffix>` pair with VM config `ios-build`, and with no other. In particular they never pair with `ios`, whose configs would be named `ios-emulator` and `ios-emulator-<suffix>`.
+* A VM config whose own name contains `-emulator` never gets emulators, since its configs would be ambiguous. The runner logs a warning if it serves one.
+* An emulator config whose prefix matches no VM config in the cluster is logged as a warning and counted in the `emulator_dangling_configs` metric, since it is almost always a typo. So is a config whose name contains `-emulator` but does not follow the convention, such as `ios-build-emulator1` or `ios-build-emulators`. Configs that pair with a VM config served by another runner are not reported.
+
+If the cluster cannot list emulator configs, for example because it predates Android emulator support, the runner logs one warning and runs without emulators. Once a list has succeeded, a later failed refresh keeps the last known pairings rather than dropping them.
+
+#### Connecting from a workflow
+
+Each job receives the coordinates of its emulators as environment variables. These are the only way a job can reach its emulator: the address is on a bridge that is routable from inside the paired VM and nowhere else, and the job cannot query the Orka cluster.
+
+| Variable | Description |
+|---|---|
+| `ORKA_EMULATOR_COUNT` | How many emulators are paired with this runner |
+| `ORKA_EMULATOR_<n>_ADB` | `host:port` to pass to `adb connect`, 1-indexed in deploy order |
+| `ORKA_EMULATOR_<n>_ADB_HOST`, `ORKA_EMULATOR_<n>_ADB_PORT` | The same address, split |
+| `ORKA_EMULATOR_<n>_NAME`, `_CONFIG` | The emulator's name and the config it came from |
+| `ORKA_EMULATOR_<n>_PLATFORM`, `_IMAGE_TYPE`, `_DEVICE_PROFILE` | Resolved from the config |
+| `ORKA_EMULATOR_ADB`, `ORKA_EMULATOR_ADB_HOST`, `ORKA_EMULATOR_ADB_PORT` | Aliases for the first emulator |
+| `ORKA_EMULATOR_ADB_TARGETS` | Every `host:port`, comma separated |
+| `ORKA_EMULATOR_<SUFFIX>_ADB`, `_ADB_HOST`, `_ADB_PORT`, `_NAME`, `_CONFIG` | Role aliases for each suffixed config, so `ios-build-emulator-tablet` is also reachable as `ORKA_EMULATOR_TABLET_ADB` |
+
+The suffix in a role alias is upper-cased, with every character other than a letter or digit replaced by `_`, so `pixel-8` becomes `PIXEL_8`. The bare `-emulator` config has no role alias. Role aliases are left out, with a warning in the runner log, when their names would collide:
+
+* A purely numeric suffix, as in `ios-build-emulator-2`, gets no role alias, because `ORKA_EMULATOR_<n>_*` is reserved for the indexed variables.
+* When two suffixes produce the same name, as `pixel-8` and `pixel.8` both do, neither gets a role alias, so which emulator a name points at never depends on ordering.
+
+The runner does not connect to the emulator for you, so that a slow first boot never holds up the job being picked up. Connect and wait for the device in your workflow:
+
+```yaml
+jobs:
+  android-tests:
+    runs-on: my-github-runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Connect to the Orka emulator
+        run: |
+          adb connect "$ORKA_EMULATOR_ADB"
+          adb wait-for-device
+          adb shell 'while [ "$(getprop sys.boot_completed)" != 1 ]; do sleep 2; done'
+
+      - name: Run instrumented tests
+        run: ./gradlew connectedAndroidTest
+```
+
+#### Requirements and limitations
+
+* **Apple silicon only.** Emulators run as host processes on Apple silicon nodes. Intel nodes cannot run them.
+* **`adb` must be available inside the VM.** Either bake the Android platform tools into your VM image or install them in the workflow, for example with `android-actions/setup-android`.
+* **Emulators are per runner, not per job.** A runner scale set is a homogeneous pool, so every job on a given runner gets the same emulators. To offer different device targets, run another instance of the Orka GitHub runner with its own runner name and its own `ORKA_VM_CONFIG`, and create emulator configs named after that VM config.
+* **All or nothing.** A job written against several emulators cannot run against fewer, so if any one emulator fails to deploy, the runner deletes the VM and every emulator it had brought up, then retries with a new VM. It waits about 15 seconds before the second attempt, doubles the wait up to about 2 minutes, and then keeps retrying about every 2 minutes until an attempt succeeds or the job is canceled. Each wait is randomized by up to half either way. Each failed attempt is logged as an error with its reason. The runner never gives up on a job by itself, because GitHub does not reliably reassign a job that no runner picks up, so a job given up on could stay queued with no runner.
+* **A pairing that does not fit is throttled.** When 5 provisioning attempts in a row, across all of a scale set's jobs, fail because a node has no room for the paired emulators, the runner logs an error and provisions only one job at a time. The other jobs wait their turn. The first attempt that succeeds, for example after load on the nodes drops or the pairing is changed, lifts the limit, and the waiting jobs go ahead. A pairing too large for any node therefore keeps only one VM at a time deploying and deleting, without stopping the scale set for good. The `emulator_capacity_breaker_open` metric is 1 while the limit is in effect.
+* **The first deploy of a platform on a node is slow.** The Android system image is downloaded on demand the first time a given platform and image type is used on a node, which is why `ORKA_EMULATOR_DEPLOY_TIMEOUT` defaults to 10 minutes. Later deploys on the same node reuse it.
+* **Each node hosts a limited number of emulators.** Every emulator runs on the same node as its paired VM, and a node can host only so many. When a node is full, the deploy fails within about 30 seconds, the failure is counted as `result="capacity"` in the `emulator_deploy_total` metric, and the runner retries with a new VM, which may land on another node.
+
+#### Emulator metrics
+
+With `ENABLE_METRICS=true`, these series are exported alongside the scale set statistics, each labeled with `runner_name`:
+
+| Metric | Description |
+|---|---|
+| `emulator_deploy_total{result}` | Emulator deploys by result: `success`, `capacity` (the node had no room), or `error` |
+| `emulator_deploy_duration_seconds` | Time taken by each emulator deploy |
+| `emulator_orphans_reaped_total` | Emulators deleted at startup because their paired VM no longer exists |
+| `emulator_dangling_configs` | Emulator configs that will never be deployed, because their name does not follow the naming convention or matches no VM config in the cluster |
+| `emulator_capacity_breaker_open` | 1 while only one job at a time is provisioned because attempts keep failing for lack of emulator capacity |
 
 #### How to use multiple runners
 

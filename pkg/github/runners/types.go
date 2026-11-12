@@ -7,11 +7,12 @@ package runners
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 
+	backoff "github.com/cenkalti/backoff/v4"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/actions"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/messagequeue"
 	"github.com/macstadium/orka-github-actions-integration/pkg/github/types"
+	"github.com/macstadium/orka-github-actions-integration/pkg/metrics"
 	"github.com/macstadium/orka-github-actions-integration/pkg/orka"
 	"go.uber.org/zap"
 )
@@ -37,16 +38,36 @@ type RunnerProvisionerInterface interface {
 	CleanupResources(ctx context.Context, runnerName string)
 }
 
+// provisionRecorder is the slice of *metrics.Metrics the processor records into. A nil
+// *metrics.Metrics satisfies it and records nothing.
+type provisionRecorder interface {
+	SetEmulatorCapacityBreakerOpen(open bool)
+}
+
+var _ provisionRecorder = (*metrics.Metrics)(nil)
+
 type RunnerMessageProcessor struct {
-	ctx                       context.Context
-	logger                    *zap.SugaredLogger
-	runnerManager             RunnerManagerInterface
-	runnerProvisioner         RunnerProvisionerInterface
-	vmTracker                 *VMTracker
-	runnerScaleSetName        string
+	ctx                context.Context
+	logger             *zap.SugaredLogger
+	runnerManager      RunnerManagerInterface
+	runnerProvisioner  RunnerProvisionerInterface
+	vmTracker          *VMTracker
+	metrics            provisionRecorder
+	runnerScaleSetName string
+
+	// upstreamCanceledJobsMutex guards both maps below, so marking a job canceled and cancelling
+	// its in-flight provisioning happen together. provisionCancels holds an entry for every job
+	// being provisioned, which provisioningInflight counts.
 	upstreamCanceledJobs      map[jobIdentity]bool
+	provisionCancels          map[jobIdentity]context.CancelFunc
 	upstreamCanceledJobsMutex sync.RWMutex
+
 	runnerContextCancels      map[string]context.CancelFunc
 	runnerContextCancelsMutex sync.Mutex
-	provisioningInflight      atomic.Int32
+
+	// newProvisionBackoff produces the wait between provisioning attempts. Tests shorten it. It never
+	// returns backoff.Stop, because provisioning retries until the job is canceled upstream.
+	newProvisionBackoff func() backoff.BackOff
+
+	capacityBreaker capacityBreaker
 }

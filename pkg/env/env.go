@@ -44,6 +44,9 @@ type Data struct {
 	OrkaEnableNodeIPMapping bool
 	OrkaNodeIPMapping       map[string]string
 
+	OrkaEmulatorDeployTimeout     int
+	EmulatorConfigRefreshInterval time.Duration
+
 	Runners []Runner
 
 	RunnerDeregistrationTimeout      time.Duration
@@ -87,6 +90,13 @@ func ParseEnv() *Data {
 		OrkaVMMetadata: getEnvWithDefault(OrkaVMMetadataEnvName, ""),
 
 		OrkaEnableNodeIPMapping: getBoolEnv(OrkaEnableNodeIPMappingEnvName, false),
+
+		// Deliberately above the CLI's own default of 5. The first deploy of a given platform and
+		// system image on a node blocks on an sdkmanager pull that can exhaust 5 minutes on its own,
+		// before AVD creation and emulator boot. It must also outlast the operator's
+		// AVD_UNSCHEDULABLE_TIMEOUT so a scheduling failure is reported as one.
+		OrkaEmulatorDeployTimeout:     getIntEnv(OrkaEmulatorDeployTimeoutEnvName, 10),
+		EmulatorConfigRefreshInterval: getDurationEnv(EmulatorConfigRefreshIntervalEnvName, 60*time.Second),
 
 		RunnerDeregistrationTimeout:      getDurationEnv(RunnerDeregistrationTimeoutEnvName, 30*time.Second),
 		RunnerDeregistrationPollInterval: getDurationEnv(RunnerDeregistrationPollIntervalEnvName, 2*time.Second),
@@ -281,7 +291,22 @@ func validateEnv(envData *Data) []string {
 		errors = append(errors, fmt.Sprintf("%s must be formatted as key=value comma separated string", OrkaVMMetadataEnvName))
 	}
 
+	if envData.OrkaEmulatorDeployTimeout <= 0 {
+		errors = append(errors, fmt.Sprintf("%s must be a positive number of minutes", OrkaEmulatorDeployTimeoutEnvName))
+	}
+
+	if envData.EmulatorConfigRefreshInterval <= 0 {
+		errors = append(errors, fmt.Sprintf("%s must be a positive duration, for example 60s", EmulatorConfigRefreshIntervalEnvName))
+	}
+
 	return errors
+}
+
+// EmulatorDeployTimeoutTooShort reports whether the emulator deploy timeout fails to outlast the
+// operator's AVD_UNSCHEDULABLE_TIMEOUT. With a shorter timeout the CLI gives up first, so a node
+// without emulator capacity is reported as a generic timeout instead of a scheduling failure.
+func (data *Data) EmulatorDeployTimeoutTooShort() bool {
+	return data.OrkaEmulatorDeployTimeout <= OperatorUnschedulableTimeoutMinutes
 }
 
 func hasAnyGitHubAppEnv(envData *Data) bool {
